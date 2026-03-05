@@ -1,0 +1,43 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: context-bridge
+
+  # ── Spring AI — Ollama (embeddings) ───────────────────────────────────────
+  ai:
+    ollama:
+      base-url: ${OLLAMA_HOST:http://localhost:11434}
+      # Embedding model — change OLLAMA_EMBED_MODEL env var to swap model
+      embedding:
+        model: ${OLLAMA_EMBED_MODEL:nomic-embed-text}
+        options:
+          num-ctx: 2048
+      # Optional: chat model for future LLM calls (uncomment when needed)
+      # chat:
+      #   model: ${OLLAMA_CHAT_MODEL:llama3.2}
+
+    # ── Chroma DB vector store ────────────────────────────────────────────────
+    vectorstore:
+      chroma:
+        host: ${CHROMA_HOST:localhost}
+        port: ${CHROMA_PORT:8000}
+        collection-name: context-snapshots
+        initialize-schema: true   # auto-creates the collection on startup
+
+# ── Actuator health endpoint ─────────────────────────────────────────────────
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health, info
+  endpoint:
+    health:
+      show-details: when-authorized
+
+# ── Logging ───────────────────────────────────────────────────────────────────
+logging:
+  level:
+    com.contextbridge: DEBUG
+    org.springframework.ai: INFO

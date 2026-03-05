@@ -1,0 +1,31 @@
+# ── Java / Maven ──────────────────────────────────────────────────────────────
+target/
+*.class
+*.jar
+*.war
+*.ear
+.classpath
+.project
+.settings/
+
+# ── Spring Boot ───────────────────────────────────────────────────────────────
+*.log
+spring.log
+
+# ── IDE ───────────────────────────────────────────────────────────────────────
+.idea/
+*.iml
+.vscode/
+*.swp
+.DS_Store
+
+# ── Node / Next.js (frontend) ─────────────────────────────────────────────────
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/.env.local
+
+# ── Environment — NEVER commit secrets ───────────────────────────────────────
+.env
+.env.local
+.env.*.local
