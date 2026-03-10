@@ -2,6 +2,8 @@ package com.contextbridge.controller;
 
 import com.contextbridge.model.ContextSnapshot;
 import com.contextbridge.service.ContextService;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.MediaType;
@@ -10,29 +12,31 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.io.IOException;
-import java.util.Map;
+import java.time.Instant;
+import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 /**
- * MCP-style SSE endpoint.
+ * MCP SSE Transport Controller.
  *
- * <p>
- * Implements a lightweight Model Context Protocol transport over Server-Sent
- * Events:
- * <ul>
- * <li>{@code GET  /mcp/sse} — opens an SSE stream; IDE agents connect
- * here.</li>
- * <li>{@code POST /mcp/checkpoint_state} — IDE agent sends a snapshot; we embed
- * + persist it.</li>
- * <li>{@code POST /mcp/restore_state} — IDE agent requests the best snapshot
- * for a project.</li>
- * </ul>
+ * <p>Implements the Model Context Protocol (MCP) over HTTP with SSE transport:
+ * <ol>
+ *   <li>{@code GET  /mcp/sse}     — Opens an SSE stream. Immediately sends an
+ *       {@code endpoint} event telling the client where to POST messages.</li>
+ *   <li>{@code POST /mcp/message} — Receives JSON-RPC 2.0 requests from the MCP
+ *       client (tool calls, initialization, etc.) and writes results back over
+ *       the SSE stream.</li>
+ * </ol>
  *
- * <p>
- * The SSE stream pushes a {@code tool_definitions} event on connect so that
- * compliant
- * MCP clients can discover the available tools automatically.
+ * <p>The protocol flow:
+ * <pre>
+ *   Client ──GET /mcp/sse──▶  Server (opens SSE stream)
+ *   Server ──SSE endpoint──▶  Client (sends message endpoint URL)
+ *   Client ──POST /mcp/message──▶ Server (JSON-RPC: initialize, tools/list, tools/call)
+ *   Server ──SSE message──▶ Client (JSON-RPC response over SSE)
+ * </pre>
  */
 @Slf4j
 @RestController
@@ -40,157 +44,339 @@ import java.util.concurrent.Executors;
 @RequiredArgsConstructor
 public class McpSseController {
 
-        private final ContextService contextService;
+    private final ContextService contextService;
+    private final ObjectMapper objectMapper;
 
-        /** Thread pool for SSE stream tasks (one thread per connected client). */
-        private final ExecutorService sseExecutor = Executors.newCachedThreadPool();
+    /** Active SSE connections keyed by session ID. */
+    private final Map<String, SseEmitter> activeEmitters = new ConcurrentHashMap<>();
 
-        // ── SSE Stream ─────────────────────────────────────────────────────────────
+    /** Thread pool for SSE stream keep-alive tasks. */
+    private final ExecutorService sseExecutor = Executors.newCachedThreadPool();
 
-        /**
-         * Opens an SSE connection and immediately pushes the MCP tool manifest.
-         * The client (IDE agent) keeps this connection alive to receive future events.
-         */
-        @GetMapping(path = "/sse", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-        public SseEmitter connectSse() {
-                SseEmitter emitter = new SseEmitter(Long.MAX_VALUE);
+    // ── MCP Protocol Constants ─────────────────────────────────────────────────
+    private static final String JSONRPC_VERSION = "2.0";
+    private static final String MCP_PROTOCOL_VERSION = "2024-11-05";
+    private static final String SERVER_NAME = "context-bridge";
+    private static final String SERVER_VERSION = "0.1.0";
 
-                sseExecutor.execute(() -> {
-                        try {
-                                // Push tool definitions so MCP clients can auto-discover tools
-                                emitter.send(SseEmitter.event()
-                                                .name("tool_definitions")
-                                                .data(mcpToolManifest()));
-
-                                // Keep-alive comment every 30 s (prevents proxy timeouts)
-                                while (!Thread.currentThread().isInterrupted()) {
-                                        Thread.sleep(30_000);
-                                        emitter.send(SseEmitter.event()
-                                                        .comment("keep-alive"));
-                                }
-                        } catch (IOException | InterruptedException e) {
-                                log.info("SSE client disconnected: {}", e.getMessage());
-                                emitter.complete();
-                        }
-                });
-
-                emitter.onTimeout(emitter::complete);
-                emitter.onError(e -> log.warn("SSE error: {}", e.getMessage()));
-                return emitter;
-        }
-
-        // ── MCP Tool Endpoints ─────────────────────────────────────────────────────
-
-        /**
-         * {@code checkpoint_state} tool — persists the active context snapshot.
-         */
-        @PostMapping("/checkpoint_state")
-        public ResponseEntity<Map<String, Object>> checkpointState(
-                        @RequestBody ContextSnapshot snapshot) {
-
-                log.info("MCP tool: checkpoint_state called for project='{}'", snapshot.projectName());
-
-                String docId = contextService.checkpointState(snapshot);
-
-                return ResponseEntity.ok(Map.of(
-                                "status", "ok",
-                                "doc_id", docId,
-                                "message", "Context snapshot persisted successfully."));
-        }
+    // ── SSE Endpoint ───────────────────────────────────────────────────────────
 
     /**
-     * {@code restore_state} tool — retrieves the most relevant snapshot for a
-     * project.
-     *
-     * @param body JSON body with {@code project_name} field (optional — returns
-     *             error guidance if missing)
+     * Opens an SSE connection and immediately sends the {@code endpoint} event
+     * so the MCP client knows where to POST JSON-RPC messages.
+     */
+    @GetMapping(path = "/sse", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public SseEmitter connectSse() {
+        String sessionId = UUID.randomUUID().toString();
+        SseEmitter emitter = new SseEmitter(Long.MAX_VALUE);
+
+        activeEmitters.put(sessionId, emitter);
+        log.info("MCP SSE client connected. sessionId='{}'", sessionId);
+
+        emitter.onCompletion(() -> {
+            activeEmitters.remove(sessionId);
+            log.info("MCP SSE client disconnected. sessionId='{}'", sessionId);
+        });
+        emitter.onTimeout(() -> {
+            activeEmitters.remove(sessionId);
+            emitter.complete();
+        });
+        emitter.onError(e -> {
+            activeEmitters.remove(sessionId);
+            log.warn("MCP SSE error for sessionId='{}': {}", sessionId, e.getMessage());
+        });
+
+        // Send the endpoint event — this is the critical handshake.
+        // The client will POST all JSON-RPC messages to this URL.
+        try {
+            emitter.send(SseEmitter.event()
+                    .name("endpoint")
+                    .data("/mcp/message?sessionId=" + sessionId));
+            log.debug("Sent endpoint event to sessionId='{}'", sessionId);
+        } catch (IOException e) {
+            log.error("Failed to send endpoint event: {}", e.getMessage());
+            emitter.completeWithError(e);
+            activeEmitters.remove(sessionId);
+            return emitter;
+        }
+
+        // Keep-alive pings every 30s
+        sseExecutor.execute(() -> {
+            try {
+                while (!Thread.currentThread().isInterrupted() && activeEmitters.containsKey(sessionId)) {
+                    Thread.sleep(30_000);
+                    if (activeEmitters.containsKey(sessionId)) {
+                        emitter.send(SseEmitter.event().comment("keep-alive"));
+                    }
+                }
+            } catch (IOException | InterruptedException e) {
+                log.debug("Keep-alive stopped for sessionId='{}': {}", sessionId, e.getMessage());
+                activeEmitters.remove(sessionId);
+            }
+        });
+
+        return emitter;
+    }
+
+    // ── JSON-RPC Message Endpoint ──────────────────────────────────────────────
+
+    /**
+     * Receives JSON-RPC 2.0 requests from the MCP client and dispatches them
+     * to the appropriate handler. Responses are sent back via the SSE stream.
+     */
+    @PostMapping(path = "/message", consumes = MediaType.APPLICATION_JSON_VALUE)
+    public ResponseEntity<Map<String, Object>> handleMessage(
+            @RequestParam String sessionId,
+            @RequestBody JsonNode request) {
+
+        String method = request.path("method").asText("");
+        JsonNode id = request.path("id");
+        JsonNode params = request.path("params");
+
+        log.info("MCP JSON-RPC: method='{}' sessionId='{}'", method, sessionId);
+
+        Map<String, Object> response;
+        try {
+            response = switch (method) {
+                case "initialize" -> handleInitialize(id);
+                case "notifications/initialized" -> {
+                    log.info("MCP client initialized for sessionId='{}'", sessionId);
+                    yield null; // Notifications don't get a response
+                }
+                case "tools/list" -> handleToolsList(id);
+                case "tools/call" -> handleToolCall(id, params);
+                case "ping" -> handlePing(id);
+                default -> {
+                    log.warn("Unknown MCP method: '{}'", method);
+                    yield jsonRpcError(id, -32601, "Method not found: " + method);
+                }
+            };
+        } catch (Exception e) {
+            log.error("Error handling MCP method '{}': {}", method, e.getMessage(), e);
+            response = jsonRpcError(id, -32603, "Internal error: " + e.getMessage());
+        }
+
+        // Send response via SSE stream if we have one
+        if (response != null) {
+            sendSseResponse(sessionId, response);
+        }
+
+        // Also return HTTP 202 Accepted (MCP SSE transport spec)
+        return ResponseEntity.accepted().build();
+    }
+
+    // ── MCP Method Handlers ────────────────────────────────────────────────────
+
+    private Map<String, Object> handleInitialize(JsonNode id) {
+        Map<String, Object> serverInfo = Map.of(
+                "name", SERVER_NAME,
+                "version", SERVER_VERSION);
+
+        Map<String, Object> capabilities = Map.of(
+                "tools", Map.of("listChanged", false));
+
+        Map<String, Object> result = Map.of(
+                "protocolVersion", MCP_PROTOCOL_VERSION,
+                "serverInfo", serverInfo,
+                "capabilities", capabilities);
+
+        return jsonRpcResult(id, result);
+    }
+
+    private Map<String, Object> handlePing(JsonNode id) {
+        return jsonRpcResult(id, Map.of());
+    }
+
+    private Map<String, Object> handleToolsList(JsonNode id) {
+        List<Map<String, Object>> tools = List.of(
+                Map.of(
+                        "name", "checkpoint_state",
+                        "description",
+                        "Persist the current working context as a snapshot. "
+                                + "Call this when switching tasks or ending a session to preserve context for later.",
+                        "inputSchema", Map.of(
+                                "type", "object",
+                                "required", List.of("project_name", "session_id", "current_goal"),
+                                "properties", Map.of(
+                                        "project_name", Map.of("type", "string",
+                                                "description", "Logical name of the project"),
+                                        "session_id", Map.of("type", "string",
+                                                "description", "Unique session identifier"),
+                                        "current_goal", Map.of("type", "string",
+                                                "description", "What you were actively working on"),
+                                        "active_files", Map.of("type", "array",
+                                                "items", Map.of("type", "string"),
+                                                "description", "Critical file paths open or modified"),
+                                        "architectural_decisions", Map.of("type", "string",
+                                                "description", "Why specific patterns or tools were chosen"),
+                                        "unresolved_issues", Map.of("type", "string",
+                                                "description", "Bugs or pending tasks for the next session")))),
+                Map.of(
+                        "name", "restore_state",
+                        "description",
+                        "Retrieve the most relevant context snapshot for a project. "
+                                + "Call this at the start of a session to resume previous work.",
+                        "inputSchema", Map.of(
+                                "type", "object",
+                                "required", List.of("project_name"),
+                                "properties", Map.of(
+                                        "project_name", Map.of("type", "string",
+                                                "description", "Project name to retrieve context for")))));
+
+        return jsonRpcResult(id, Map.of("tools", tools));
+    }
+
+    private Map<String, Object> handleToolCall(JsonNode id, JsonNode params) {
+        String toolName = params.path("name").asText("");
+        JsonNode arguments = params.path("arguments");
+
+        log.info("MCP tool call: '{}'", toolName);
+
+        return switch (toolName) {
+            case "checkpoint_state" -> {
+                try {
+                    ContextSnapshot snapshot = ContextSnapshot.builder()
+                            .timestamp(Instant.now())
+                            .projectName(arguments.path("project_name").asText(""))
+                            .sessionId(arguments.path("session_id").asText(""))
+                            .currentGoal(arguments.path("current_goal").asText(""))
+                            .activeFiles(arguments.has("active_files")
+                                    ? objectMapper.convertValue(arguments.get("active_files"),
+                                            objectMapper.getTypeFactory().constructCollectionType(List.class, String.class))
+                                    : List.of())
+                            .architecturalDecisions(arguments.path("architectural_decisions").asText(null))
+                            .unresolvedIssues(arguments.path("unresolved_issues").asText(null))
+                            .build();
+
+                    String docId = contextService.checkpointState(snapshot);
+                    yield toolResult(id, "Context snapshot saved successfully. Doc ID: " + docId, false);
+                } catch (Exception e) {
+                    log.error("checkpoint_state failed: {}", e.getMessage(), e);
+                    yield toolResult(id, "Failed to save context: " + e.getMessage(), true);
+                }
+            }
+            case "restore_state" -> {
+                String projectName = arguments.path("project_name").asText("");
+                if (projectName.isBlank()) {
+                    yield toolResult(id, "Error: 'project_name' is required.", true);
+                }
+
+                Optional<ContextSnapshot> snapshot = contextService.restoreState(projectName);
+                if (snapshot.isPresent()) {
+                    try {
+                        String json = objectMapper.writerWithDefaultPrettyPrinter()
+                                .writeValueAsString(snapshot.get());
+                        yield toolResult(id, json, false);
+                    } catch (Exception e) {
+                        yield toolResult(id, "Error serializing snapshot: " + e.getMessage(), true);
+                    }
+                } else {
+                    yield toolResult(id, "No context snapshot found for project: " + projectName, false);
+                }
+            }
+            default -> {
+                log.warn("Unknown tool: '{}'", toolName);
+                yield jsonRpcError(id, -32602, "Unknown tool: " + toolName);
+            }
+        };
+    }
+
+    // ── SSE Response Sender ────────────────────────────────────────────────────
+
+    private void sendSseResponse(String sessionId, Map<String, Object> response) {
+        SseEmitter emitter = activeEmitters.get(sessionId);
+        if (emitter == null) {
+            log.warn("No active SSE emitter for sessionId='{}'. Response dropped.", sessionId);
+            return;
+        }
+
+        try {
+            emitter.send(SseEmitter.event()
+                    .name("message")
+                    .data(objectMapper.writeValueAsString(response)));
+            log.debug("Sent SSE response for sessionId='{}'", sessionId);
+        } catch (IOException e) {
+            log.warn("Failed to send SSE response for sessionId='{}': {}", sessionId, e.getMessage());
+            activeEmitters.remove(sessionId);
+        }
+    }
+
+    // ── JSON-RPC Helpers ───────────────────────────────────────────────────────
+
+    private Map<String, Object> jsonRpcResult(JsonNode id, Map<String, Object> result) {
+        Map<String, Object> response = new LinkedHashMap<>();
+        response.put("jsonrpc", JSONRPC_VERSION);
+        response.put("id", nodeToValue(id));
+        response.put("result", result);
+        return response;
+    }
+
+    private Map<String, Object> jsonRpcError(JsonNode id, int code, String message) {
+        Map<String, Object> response = new LinkedHashMap<>();
+        response.put("jsonrpc", JSONRPC_VERSION);
+        response.put("id", nodeToValue(id));
+        response.put("error", Map.of("code", code, "message", message));
+        return response;
+    }
+
+    private Map<String, Object> toolResult(JsonNode id, String text, boolean isError) {
+        List<Map<String, Object>> content = List.of(Map.of(
+                "type", "text",
+                "text", text));
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("content", content);
+        result.put("isError", isError);
+
+        return jsonRpcResult(id, result);
+    }
+
+    private Object nodeToValue(JsonNode node) {
+        if (node == null || node.isMissingNode() || node.isNull()) return null;
+        if (node.isInt()) return node.asInt();
+        if (node.isLong()) return node.asLong();
+        return node.asText();
+    }
+
+    // ── Legacy REST Endpoints (backward compat with manual testing) ─────────
+
+    /**
+     * {@code checkpoint_state} — direct REST endpoint for manual/curl testing.
+     */
+    @PostMapping("/checkpoint_state")
+    public ResponseEntity<Map<String, Object>> checkpointState(
+            @RequestBody ContextSnapshot snapshot) {
+
+        log.info("REST checkpoint_state for project='{}'", snapshot.projectName());
+        String docId = contextService.checkpointState(snapshot);
+
+        return ResponseEntity.ok(Map.of(
+                "status", "ok",
+                "doc_id", docId,
+                "message", "Context snapshot persisted successfully."));
+    }
+
+    /**
+     * {@code restore_state} — direct REST endpoint for manual/curl testing.
      */
     @PostMapping("/restore_state")
     public ResponseEntity<?> restoreState(
-                    @RequestBody(required = false) Map<String, String> body) {
+            @RequestBody(required = false) Map<String, String> body) {
 
-        if (body == null || body.isEmpty()) {
-            log.warn("MCP restore_state called with no request body");
+        if (body == null || body.isEmpty() || body.get("project_name") == null) {
             return ResponseEntity.badRequest().body(Map.of(
-                            "status", "error",
-                            "message",
-                            "Request body is required. Send JSON: {\"project_name\": \"your-project\"}"));
+                    "status", "error",
+                    "message",
+                    "Request body required. Send: {\"project_name\": \"your-project\"}"));
         }
 
         String projectName = body.get("project_name");
-        if (projectName == null || projectName.isBlank()) {
-            log.warn("MCP restore_state called without project_name");
-            return ResponseEntity.badRequest().body(Map.of(
-                            "status", "error",
-                            "message",
-                            "Missing 'project_name' in request body."));
-        }
-
-        log.info("MCP tool: restore_state called for project='{}'", projectName);
+        log.info("REST restore_state for project='{}'", projectName);
 
         return contextService.restoreState(projectName)
-                        .<ResponseEntity<?>>map(ResponseEntity::ok)
-                        .orElse(ResponseEntity.ok(Map.of(
-                                        "status", "not_found",
-                                        "message", "No snapshot found for project: " + projectName)));
-    }        // ── Tool Manifest ──────────────────────────────────────────────────────────
-
-        /** Builds the MCP tool manifest that is pushed to clients on connect. */
-        private Map<String, Object> mcpToolManifest() {
-                return Map.of(
-                                "protocol", "mcp",
-                                "version", "0.1",
-                                "tools", java.util.List.of(
-                                                Map.of(
-                                                                "name", "checkpoint_state",
-                                                                "description",
-                                                                "Summarize current working context into a snapshot and persist it.",
-                                                                "input_schema", Map.of(
-                                                                                "type", "object",
-                                                                                "required", java.util.List.of(
-                                                                                                "project_name",
-                                                                                                "session_id",
-                                                                                                "current_goal"),
-                                                                                "properties", Map.of(
-                                                                                                "project_name",
-                                                                                                Map.of("type", "string"),
-                                                                                                "session_id",
-                                                                                                Map.of("type", "string"),
-                                                                                                "current_goal",
-                                                                                                Map.of("type", "string"),
-                                                                                                "active_files",
-                                                                                                Map.of("type", "array",
-                                                                                                                "items",
-                                                                                                                Map.of("type", "string")),
-                                                                                                "architectural_decisions",
-                                                                                                Map.of("type", "string"),
-                                                                                                "unresolved_issues",
-                                                                                                Map.of("type", "string")))),
-                                                Map.of(
-                                                                "name", "restore_state",
-                                                                "description",
-                                                                "Retrieve the most relevant context snapshot for a project.",
-                                                                "input_schema", Map.of(
-                                                                                "type", "object",
-                                                                                "required",
-                                                                                java.util.List.of("project_name"),
-                                                                                "properties", Map.of(
-                                                                                                "project_name",
-                                                                                                Map.of("type", "string"))))));
-        }
-
-        // ── Error Handling ────────────────────────────────────────────────────────
-
-        /**
-         * Catch Chroma parsing errors (empty collection) and return a graceful response
-         * instead of a raw 500 stacktrace.
-         */
-        @ExceptionHandler(org.springframework.web.client.UnknownContentTypeException.class)
-        public ResponseEntity<Map<String, String>> handleChromaErrors(Exception ex) {
-                log.warn("MCP endpoint: Chroma error intercepted: {}", ex.getMessage());
-                return ResponseEntity.ok(Map.of(
-                                "status", "error",
-                                "message",
-                                "Vector store is not ready or empty. Please try again after checkpointing."));
-        }
+                .<ResponseEntity<?>>map(ResponseEntity::ok)
+                .orElse(ResponseEntity.ok(Map.of(
+                        "status", "not_found",
+                        "message", "No snapshot found for project: " + projectName)));
+    }
 }
