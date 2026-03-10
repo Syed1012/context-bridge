@@ -1,5 +1,5 @@
 server:
-  port: 8080
+  port: 9090
 
 spring:
   application:
@@ -23,8 +23,7 @@ spring:
       chroma:
         host: ${CHROMA_HOST:localhost}
         port: ${CHROMA_PORT:8000}
-        collection-name: context-snapshots
-        initialize-schema: true   # auto-creates the collection on startup
+        collection-name: contextsnapshots
 
 # ── Actuator health endpoint ─────────────────────────────────────────────────
 management:

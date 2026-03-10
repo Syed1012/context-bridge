@@ -1,58 +1,22 @@
 services:
 
-  # ── Vector Database ────────────────────────────────────────────────────────
+  # ── Vector Database ──
   chromadb:
-    image: chromadb/chroma:latest
-    container_name: contextbridge-chroma
+    image: chromadb/chroma:0.5.20
+    container_name: chroma-db
     ports:
       - "8000:8000"
     volumes:
       - chroma-data:/chroma/chroma
     environment:
-      - CHROMA_SERVER_AUTH_CREDENTIALS_PROVIDER=chromadb.auth.token.TokenConfigServerAuthCredentialsProvider
       - ANONYMIZED_TELEMETRY=False
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/version"]
+      test: [ "CMD", "curl", "-f", "http://localhost:8000/api/v1/version" ]
       interval: 10s
       timeout: 5s
       retries: 5
     restart: unless-stopped
 
-  # ── Local LLM Inference ────────────────────────────────────────────────────
-  ollama:
-    image: ollama/ollama:latest
-    container_name: contextbridge-ollama
-    ports:
-      - "11434:11434"
-    volumes:
-      - ollama-data:/root/.ollama
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
-      interval: 15s
-      timeout: 10s
-      retries: 8
-    restart: unless-stopped
-
-  # ── One-shot model puller — runs once then exits ───────────────────────────
-  # Change OLLAMA_MODEL in .env to swap models without touching this file.
-  ollama-init:
-    image: ollama/ollama:latest
-    container_name: contextbridge-ollama-init
-    depends_on:
-      ollama:
-        condition: service_healthy
-    entrypoint: ["/bin/sh", "-c"]
-    command:
-      - |
-        echo "Pulling embedding model: ${OLLAMA_EMBED_MODEL:-nomic-embed-text}"
-        OLLAMA_HOST=http://ollama:11434 ollama pull ${OLLAMA_EMBED_MODEL:-nomic-embed-text}
-        echo "Model pull complete."
-    environment:
-      - OLLAMA_HOST=http://ollama:11434
-    restart: "no"
-
 volumes:
   chroma-data:
-    driver: local
-  ollama-data:
     driver: local

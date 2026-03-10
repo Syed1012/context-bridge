@@ -57,12 +57,14 @@
         <dependency>
             <groupId>org.springframework.ai</groupId>
             <artifactId>spring-ai-starter-model-ollama</artifactId>
+            <version>${spring-ai.version}</version>
         </dependency>
 
         <!-- ── Spring AI — Chroma DB vector store ─────────────────────────── -->
         <dependency>
             <groupId>org.springframework.ai</groupId>
             <artifactId>spring-ai-starter-vector-store-chroma</artifactId>
+            <version>${spring-ai.version}</version>
         </dependency>
 
         <!-- ── Lombok ─────────────────────────────────────────────────────── -->

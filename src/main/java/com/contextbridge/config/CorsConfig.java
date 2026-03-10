@@ -19,9 +19,10 @@ public class CorsConfig {
     public CorsFilter corsFilter() {
         CorsConfiguration config = new CorsConfiguration();
         config.setAllowedOriginPatterns(List.of(
-                "http://localhost:3000",   // Next.js dev server
-                "http://localhost:*",      // any local port during dev
-                "https://*.vercel.app"     // future Vercel deployment
+                "http://localhost:3000", // Next.js dev server
+                "http://localhost:*", // any local port during dev
+                "http://*:*", // LAN testing (remote laptop)
+                "https://*.vercel.app" // future Vercel deployment
         ));
         config.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
         config.setAllowedHeaders(List.of("*"));

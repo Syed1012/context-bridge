@@ -7,7 +7,7 @@ import { Brain, RefreshCw, Activity, Boxes } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 
-const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
+const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:9090";
 const POLL_INTERVAL_MS = 5_000;
 
 export default function DashboardPage() {
