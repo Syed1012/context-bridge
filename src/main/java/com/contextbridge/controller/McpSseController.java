@@ -98,27 +98,42 @@ public class McpSseController {
                                 "message", "Context snapshot persisted successfully."));
         }
 
-        /**
-         * {@code restore_state} tool — retrieves the most relevant snapshot for a
-         * project.
-         *
-         * @param body JSON body with {@code project_name} field
-         */
-        @PostMapping("/restore_state")
-        public ResponseEntity<?> restoreState(
-                        @RequestBody Map<String, String> body) {
+    /**
+     * {@code restore_state} tool — retrieves the most relevant snapshot for a
+     * project.
+     *
+     * @param body JSON body with {@code project_name} field (optional — returns
+     *             error guidance if missing)
+     */
+    @PostMapping("/restore_state")
+    public ResponseEntity<?> restoreState(
+                    @RequestBody(required = false) Map<String, String> body) {
 
-                String projectName = body.get("project_name");
-                log.info("MCP tool: restore_state called for project='{}'", projectName);
-
-                return contextService.restoreState(projectName)
-                                .<ResponseEntity<?>>map(ResponseEntity::ok)
-                                .orElse(ResponseEntity.ok(Map.of(
-                                                "status", "not_found",
-                                                "message", "No snapshot found for project: " + projectName)));
+        if (body == null || body.isEmpty()) {
+            log.warn("MCP restore_state called with no request body");
+            return ResponseEntity.badRequest().body(Map.of(
+                            "status", "error",
+                            "message",
+                            "Request body is required. Send JSON: {\"project_name\": \"your-project\"}"));
         }
 
-        // ── Tool Manifest ──────────────────────────────────────────────────────────
+        String projectName = body.get("project_name");
+        if (projectName == null || projectName.isBlank()) {
+            log.warn("MCP restore_state called without project_name");
+            return ResponseEntity.badRequest().body(Map.of(
+                            "status", "error",
+                            "message",
+                            "Missing 'project_name' in request body."));
+        }
+
+        log.info("MCP tool: restore_state called for project='{}'", projectName);
+
+        return contextService.restoreState(projectName)
+                        .<ResponseEntity<?>>map(ResponseEntity::ok)
+                        .orElse(ResponseEntity.ok(Map.of(
+                                        "status", "not_found",
+                                        "message", "No snapshot found for project: " + projectName)));
+    }        // ── Tool Manifest ──────────────────────────────────────────────────────────
 
         /** Builds the MCP tool manifest that is pushed to clients on connect. */
         private Map<String, Object> mcpToolManifest() {
@@ -170,10 +185,7 @@ public class McpSseController {
          * Catch Chroma parsing errors (empty collection) and return a graceful response
          * instead of a raw 500 stacktrace.
          */
-        @ExceptionHandler({
-                        org.springframework.web.client.UnknownContentTypeException.class,
-                        org.springframework.http.converter.HttpMessageNotReadableException.class
-        })
+        @ExceptionHandler(org.springframework.web.client.UnknownContentTypeException.class)
         public ResponseEntity<Map<String, String>> handleChromaErrors(Exception ex) {
                 log.warn("MCP endpoint: Chroma error intercepted: {}", ex.getMessage());
                 return ResponseEntity.ok(Map.of(

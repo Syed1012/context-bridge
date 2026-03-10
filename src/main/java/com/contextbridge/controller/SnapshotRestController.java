@@ -5,15 +5,12 @@ import com.contextbridge.service.ContextService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
-import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.annotation.*;
-import org.springframework.web.client.UnknownContentTypeException;
 
 import java.util.List;
 import java.util.Map;
 
 /**
- * Standard REST API consumed by the Next.js frontend dashboard.
  *
  * <p>
  * Endpoints:
@@ -66,23 +63,5 @@ public class SnapshotRestController {
                 return ResponseEntity.ok(Map.of(
                                 "status", "ok",
                                 "doc_id", docId));
-        }
-
-        /**
-         * Spring AI 1.0.0 throws UnknownContentTypeException or
-         * HttpMessageNotReadableException
-         * when Chroma DB returns an empty response for a similarity search on an empty
-         * collection.
-         * We catch these globally in this controller and gracefully return an empty
-         * list.
-         */
-        @ExceptionHandler({
-                        org.springframework.web.client.UnknownContentTypeException.class,
-                        org.springframework.http.converter.HttpMessageNotReadableException.class
-        })
-        public ResponseEntity<List<ContextSnapshot>> handleEmptyChromaCollection(Exception ex) {
-                log.warn("Intercepted Spring AI / Chroma empty collection parsing error: {}. Returning empty list.",
-                                ex.getMessage());
-                return ResponseEntity.ok(List.of());
         }
 }

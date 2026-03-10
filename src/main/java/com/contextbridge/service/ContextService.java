@@ -78,24 +78,30 @@ public class ContextService {
     public Optional<ContextSnapshot> restoreState(String projectName) {
         log.info("Restoring state for project='{}'", projectName);
 
-        List<Document> results = vectorStore.similaritySearch(
-                SearchRequest.builder()
-                        .query(projectName)
-                        .topK(1)
-                        .filterExpression("project_name == '" + projectName + "'")
-                        .build()
-        );
+        try {
+            List<Document> results = vectorStore.similaritySearch(
+                    SearchRequest.builder()
+                            .query(projectName)
+                            .topK(1)
+                            .similarityThreshold(0.0)
+                            .filterExpression("project_name == '" + projectName + "'")
+                            .build()
+            );
 
-        if (results.isEmpty()) {
-            log.warn("No snapshot found for project='{}'", projectName);
+            if (results.isEmpty()) {
+                log.warn("No snapshot found for project='{}'", projectName);
+                return Optional.empty();
+            }
+
+            Document doc = results.getFirst();
+            log.info("Snapshot retrieved for project='{}' score='{}'",
+                    projectName, doc.getScore());
+
+            return Optional.of(fromJson(doc.getText()));
+        } catch (Exception e) {
+            log.warn("Similarity search failed for project='{}': {}", projectName, e.getMessage());
             return Optional.empty();
         }
-
-        Document doc = results.getFirst();
-        log.info("Snapshot retrieved for project='{}' score='{}'",
-                projectName, doc.getScore());
-
-        return Optional.of(fromJson(doc.getText()));
     }
 
     /**
@@ -106,21 +112,25 @@ public class ContextService {
                 ? projectName
                 : "context snapshot";
 
-        SearchRequest request = (projectName != null && !projectName.isBlank())
-                ? SearchRequest.builder()
-                        .query(query)
-                        .topK(50)
-                        .filterExpression("project_name == '" + projectName + "'")
-                        .build()
-                : SearchRequest.builder()
-                        .query(query)
-                        .topK(50)
-                        .build();
+        SearchRequest.Builder builder = SearchRequest.builder()
+                .query(query)
+                .topK(50)
+                .similarityThreshold(0.0); // return all matches regardless of score
 
-        return vectorStore.similaritySearch(request)
-                .stream()
-                .map(doc -> fromJson(doc.getText()))
-                .toList();
+        if (projectName != null && !projectName.isBlank()) {
+            builder.filterExpression("project_name == '" + projectName + "'");
+        }
+
+        try {
+            List<Document> docs = vectorStore.similaritySearch(builder.build());
+            log.debug("Similarity search returned {} documents", docs.size());
+            return docs.stream()
+                    .map(doc -> fromJson(doc.getText()))
+                    .toList();
+        } catch (Exception e) {
+            log.warn("Similarity search failed (collection may be empty): {}", e.getMessage());
+            return List.of();
+        }
     }
 
     // ── Helpers ────────────────────────────────────────────────────────────────
