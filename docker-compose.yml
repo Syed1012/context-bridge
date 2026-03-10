@@ -2,7 +2,7 @@ services:
 
   # ── Vector Database ──
   chromadb:
-    image: chromadb/chroma:0.5.20
+    image: chromadb/chroma:1.5.5
     container_name: chroma-db
     ports:
       - "8000:8000"
@@ -11,7 +11,7 @@ services:
     environment:
       - ANONYMIZED_TELEMETRY=False
     healthcheck:
-      test: [ "CMD", "curl", "-f", "http://localhost:8000/api/v1/version" ]
+      test: [ "CMD", "curl", "-f", "http://localhost:8000/api/v2/heartbeat" ]
       interval: 10s
       timeout: 5s
       retries: 5
