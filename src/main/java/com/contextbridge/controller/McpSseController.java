@@ -188,34 +188,72 @@ public class McpSseController {
     }
 
     private Map<String, Object> handleToolsList(JsonNode id) {
+        // checkpoint_state properties — using LinkedHashMap because Map.of() is limited to 10 entries
+        Map<String, Object> checkpointProps = new LinkedHashMap<>();
+        checkpointProps.put("project_name", Map.of("type", "string",
+                "description", "Logical name of the project"));
+        checkpointProps.put("session_id", Map.of("type", "string",
+                "description", "Unique session identifier"));
+        checkpointProps.put("current_goal", Map.of("type", "string",
+                "description", "What you were actively working on — be specific and detailed"));
+        checkpointProps.put("conversation_summary", Map.of("type", "string",
+                "description", "Comprehensive summary of the entire session: what was discussed, "
+                        + "what was tried, what worked, what failed. This is the most valuable "
+                        + "field for the next session to understand the full context."));
+        checkpointProps.put("progress_status", Map.of("type", "string",
+                "description", "Current status: 'completed', 'in_progress', 'blocked', or 'abandoned'"));
+        checkpointProps.put("active_files", Map.of("type", "array",
+                "items", Map.of("type", "string"),
+                "description", "Critical file paths open or modified during this session"));
+        checkpointProps.put("code_changes", Map.of("type", "array",
+                "items", Map.of("type", "object",
+                        "properties", Map.of(
+                                "file", Map.of("type", "string", "description", "File path relative to project root"),
+                                "action", Map.of("type", "string", "description", "One of: created, modified, deleted, renamed"),
+                                "summary", Map.of("type", "string", "description", "One-line summary of what changed"),
+                                "details", Map.of("type", "string", "description", "Detailed description: methods added, logic modified, configs changed. Be thorough — this lets the next session pick up exactly where you left off."))),
+                "description", "Detailed list of every code change made. Include what was modified and WHY."));
+        checkpointProps.put("key_decisions_log", Map.of("type", "array",
+                "items", Map.of("type", "object",
+                        "properties", Map.of(
+                                "decision", Map.of("type", "string", "description", "What was decided"),
+                                "rationale", Map.of("type", "string", "description", "Why this choice was made"),
+                                "alternatives_considered", Map.of("type", "string", "description", "Other options considered"))),
+                "description", "Technical/architectural decisions made during this session with rationale"));
+        checkpointProps.put("tech_stack", Map.of("type", "array",
+                "items", Map.of("type", "string"),
+                "description", "Key technologies and versions in use, e.g. ['Spring Boot 3.5', 'Java 21', 'Next.js 16']"));
+        checkpointProps.put("next_steps", Map.of("type", "array",
+                "items", Map.of("type", "string"),
+                "description", "Ordered list of what the next session should tackle first — a prioritized handoff checklist"));
+        checkpointProps.put("related_snapshots", Map.of("type", "array",
+                "items", Map.of("type", "string"),
+                "description", "Doc IDs of prior snapshots this work builds on (for session chaining)"));
+        // Legacy fields kept for backward compat
+        checkpointProps.put("architectural_decisions", Map.of("type", "string",
+                "description", "(Legacy) Why specific patterns or tools were chosen"));
+        checkpointProps.put("unresolved_issues", Map.of("type", "string",
+                "description", "(Legacy) Bugs or pending tasks — prefer next_steps instead"));
+
         List<Map<String, Object>> tools = List.of(
                 Map.of(
                         "name", "checkpoint_state",
                         "description",
-                        "Persist the current working context as a snapshot. "
-                                + "Call this when switching tasks or ending a session to preserve context for later.",
+                        "Persist the current working context as a rich snapshot. "
+                                + "Call this when switching tasks, ending a session, or PERIODICALLY during long sessions "
+                                + "to prevent context loss. Include detailed code_changes and conversation_summary "
+                                + "so the next session can pick up exactly where you left off.",
                         "inputSchema", Map.of(
                                 "type", "object",
-                                "required", List.of("project_name", "session_id", "current_goal"),
-                                "properties", Map.of(
-                                        "project_name", Map.of("type", "string",
-                                                "description", "Logical name of the project"),
-                                        "session_id", Map.of("type", "string",
-                                                "description", "Unique session identifier"),
-                                        "current_goal", Map.of("type", "string",
-                                                "description", "What you were actively working on"),
-                                        "active_files", Map.of("type", "array",
-                                                "items", Map.of("type", "string"),
-                                                "description", "Critical file paths open or modified"),
-                                        "architectural_decisions", Map.of("type", "string",
-                                                "description", "Why specific patterns or tools were chosen"),
-                                        "unresolved_issues", Map.of("type", "string",
-                                                "description", "Bugs or pending tasks for the next session")))),
+                                "required", List.of("project_name", "session_id", "current_goal",
+                                        "conversation_summary", "progress_status"),
+                                "properties", checkpointProps)),
                 Map.of(
                         "name", "restore_state",
                         "description",
                         "Retrieve the most relevant context snapshot for a project. "
-                                + "Call this at the start of a session to resume previous work.",
+                                + "Call this at the start of a session to resume previous work, "
+                                + "or MID-CONVERSATION if you've lost track of earlier context.",
                         "inputSchema", Map.of(
                                 "type", "object",
                                 "required", List.of("project_name"),
@@ -240,12 +278,18 @@ public class McpSseController {
                             .projectName(arguments.path("project_name").asText(""))
                             .sessionId(arguments.path("session_id").asText(""))
                             .currentGoal(arguments.path("current_goal").asText(""))
-                            .activeFiles(arguments.has("active_files")
-                                    ? objectMapper.convertValue(arguments.get("active_files"),
-                                            objectMapper.getTypeFactory().constructCollectionType(List.class, String.class))
-                                    : List.of())
+                            .activeFiles(parseStringList(arguments, "active_files"))
+                            // Legacy fields
                             .architecturalDecisions(arguments.path("architectural_decisions").asText(null))
                             .unresolvedIssues(arguments.path("unresolved_issues").asText(null))
+                            // Enriched fields (v2)
+                            .conversationSummary(arguments.path("conversation_summary").asText(null))
+                            .progressStatus(arguments.path("progress_status").asText("in_progress"))
+                            .techStack(parseStringList(arguments, "tech_stack"))
+                            .nextSteps(parseStringList(arguments, "next_steps"))
+                            .relatedSnapshots(parseStringList(arguments, "related_snapshots"))
+                            .codeChanges(parseCodeChanges(arguments))
+                            .keyDecisionsLog(parseKeyDecisions(arguments))
                             .build();
 
                     String docId = contextService.checkpointState(snapshot);
@@ -336,6 +380,47 @@ public class McpSseController {
         if (node.isInt()) return node.asInt();
         if (node.isLong()) return node.asLong();
         return node.asText();
+    }
+
+    // ── JSON Parsing Helpers ─────────────────────────────────────────────────
+
+    private List<String> parseStringList(JsonNode args, String fieldName) {
+        if (!args.has(fieldName) || !args.get(fieldName).isArray()) {
+            return List.of();
+        }
+        return objectMapper.convertValue(args.get(fieldName),
+                objectMapper.getTypeFactory().constructCollectionType(List.class, String.class));
+    }
+
+    private List<ContextSnapshot.CodeChange> parseCodeChanges(JsonNode args) {
+        if (!args.has("code_changes") || !args.get("code_changes").isArray()) {
+            return List.of();
+        }
+        List<ContextSnapshot.CodeChange> changes = new ArrayList<>();
+        for (JsonNode node : args.get("code_changes")) {
+            changes.add(ContextSnapshot.CodeChange.builder()
+                    .file(node.path("file").asText(""))
+                    .action(node.path("action").asText("modified"))
+                    .summary(node.path("summary").asText(""))
+                    .details(node.path("details").asText(null))
+                    .build());
+        }
+        return changes;
+    }
+
+    private List<ContextSnapshot.KeyDecision> parseKeyDecisions(JsonNode args) {
+        if (!args.has("key_decisions_log") || !args.get("key_decisions_log").isArray()) {
+            return List.of();
+        }
+        List<ContextSnapshot.KeyDecision> decisions = new ArrayList<>();
+        for (JsonNode node : args.get("key_decisions_log")) {
+            decisions.add(ContextSnapshot.KeyDecision.builder()
+                    .decision(node.path("decision").asText(""))
+                    .rationale(node.path("rationale").asText(""))
+                    .alternativesConsidered(node.path("alternatives_considered").asText(null))
+                    .build());
+        }
+        return decisions;
     }
 
     // ── Legacy REST Endpoints (backward compat with manual testing) ─────────

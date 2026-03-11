@@ -10,6 +10,7 @@ import org.springframework.ai.vectorstore.SearchRequest;
 import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.stereotype.Service;
 
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -52,15 +53,21 @@ public class ContextService {
 
         String content = toJson(snapshot);
 
-        Document doc = new Document(
-                content,
-                Map.of(
-                        "project_name",   snapshot.projectName(),
-                        "session_id",     snapshot.sessionId(),
-                        "timestamp",      snapshot.timestamp().toString(),
-                        "current_goal",   Optional.ofNullable(snapshot.currentGoal()).orElse("")
-                )
-        );
+        // Build metadata map — Chroma indexes these for filtering and relevance
+        Map<String, Object> metadata = new LinkedHashMap<>();
+        metadata.put("project_name",   snapshot.projectName());
+        metadata.put("session_id",     snapshot.sessionId());
+        metadata.put("timestamp",      snapshot.timestamp().toString());
+        metadata.put("current_goal",   Optional.ofNullable(snapshot.currentGoal()).orElse(""));
+        metadata.put("progress_status", Optional.ofNullable(snapshot.progressStatus()).orElse("in_progress"));
+        // Include a truncated conversation_summary for search boost
+        if (snapshot.conversationSummary() != null && !snapshot.conversationSummary().isBlank()) {
+            String summary = snapshot.conversationSummary();
+            metadata.put("conversation_summary",
+                    summary.length() > 500 ? summary.substring(0, 500) + "..." : summary);
+        }
+
+        Document doc = new Document(content, metadata);
 
         vectorStore.add(List.of(doc));
         log.info("[Snapshot] Saved successfully (docId={})", doc.getId());
