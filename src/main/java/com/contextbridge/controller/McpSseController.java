@@ -71,11 +71,11 @@ public class McpSseController {
         SseEmitter emitter = new SseEmitter(Long.MAX_VALUE);
 
         activeEmitters.put(sessionId, emitter);
-        log.info("MCP SSE client connected. sessionId='{}'", sessionId);
+        log.info("[MCP] Client connected (sessionId={})", sessionId);
 
         emitter.onCompletion(() -> {
             activeEmitters.remove(sessionId);
-            log.info("MCP SSE client disconnected. sessionId='{}'", sessionId);
+            log.info("[MCP] Client disconnected (sessionId={})", sessionId);
         });
         emitter.onTimeout(() -> {
             activeEmitters.remove(sessionId);
@@ -83,7 +83,7 @@ public class McpSseController {
         });
         emitter.onError(e -> {
             activeEmitters.remove(sessionId);
-            log.warn("MCP SSE error for sessionId='{}': {}", sessionId, e.getMessage());
+            log.warn("[MCP] SSE connection error (sessionId={}): {}", sessionId, e.getMessage());
         });
 
         // Send the endpoint event — this is the critical handshake.
@@ -92,9 +92,9 @@ public class McpSseController {
             emitter.send(SseEmitter.event()
                     .name("endpoint")
                     .data("/mcp/message?sessionId=" + sessionId));
-            log.debug("Sent endpoint event to sessionId='{}'", sessionId);
+            log.debug("[MCP] Sent endpoint handshake to sessionId={}", sessionId);
         } catch (IOException e) {
-            log.error("Failed to send endpoint event: {}", e.getMessage());
+            log.error("[MCP] Failed to send endpoint handshake: {}. Client will not be able to communicate.", e.getMessage());
             emitter.completeWithError(e);
             activeEmitters.remove(sessionId);
             return emitter;
@@ -110,7 +110,7 @@ public class McpSseController {
                     }
                 }
             } catch (IOException | InterruptedException e) {
-                log.debug("Keep-alive stopped for sessionId='{}': {}", sessionId, e.getMessage());
+                log.debug("[MCP] Keep-alive stopped for sessionId={}", sessionId);
                 activeEmitters.remove(sessionId);
             }
         });
@@ -133,26 +133,26 @@ public class McpSseController {
         JsonNode id = request.path("id");
         JsonNode params = request.path("params");
 
-        log.info("MCP JSON-RPC: method='{}' sessionId='{}'", method, sessionId);
+        log.info("[MCP] \u2190 {} (sessionId={})", method, sessionId);
 
         Map<String, Object> response;
         try {
             response = switch (method) {
                 case "initialize" -> handleInitialize(id);
                 case "notifications/initialized" -> {
-                    log.info("MCP client initialized for sessionId='{}'", sessionId);
+                    log.debug("[MCP] Client initialized (sessionId={})", sessionId);
                     yield null; // Notifications don't get a response
                 }
                 case "tools/list" -> handleToolsList(id);
                 case "tools/call" -> handleToolCall(id, params);
                 case "ping" -> handlePing(id);
                 default -> {
-                    log.warn("Unknown MCP method: '{}'", method);
+                    log.warn("[MCP] Unsupported method '{}' \u2014 client may be using a newer protocol version", method);
                     yield jsonRpcError(id, -32601, "Method not found: " + method);
                 }
             };
         } catch (Exception e) {
-            log.error("Error handling MCP method '{}': {}", method, e.getMessage(), e);
+            log.error("[MCP] Error handling method '{}': {}", method, e.getMessage(), e);
             response = jsonRpcError(id, -32603, "Internal error: " + e.getMessage());
         }
 
@@ -230,7 +230,7 @@ public class McpSseController {
         String toolName = params.path("name").asText("");
         JsonNode arguments = params.path("arguments");
 
-        log.info("MCP tool call: '{}'", toolName);
+        log.info("[MCP] Calling tool '{}'", toolName);
 
         return switch (toolName) {
             case "checkpoint_state" -> {
@@ -251,7 +251,7 @@ public class McpSseController {
                     String docId = contextService.checkpointState(snapshot);
                     yield toolResult(id, "Context snapshot saved successfully. Doc ID: " + docId, false);
                 } catch (Exception e) {
-                    log.error("checkpoint_state failed: {}", e.getMessage(), e);
+                    log.error("[MCP] Tool 'checkpoint_state' failed: {}", e.getMessage(), e);
                     yield toolResult(id, "Failed to save context: " + e.getMessage(), true);
                 }
             }
@@ -275,7 +275,7 @@ public class McpSseController {
                 }
             }
             default -> {
-                log.warn("Unknown tool: '{}'", toolName);
+                log.warn("[MCP] Unknown tool '{}' requested", toolName);
                 yield jsonRpcError(id, -32602, "Unknown tool: " + toolName);
             }
         };
@@ -286,7 +286,7 @@ public class McpSseController {
     private void sendSseResponse(String sessionId, Map<String, Object> response) {
         SseEmitter emitter = activeEmitters.get(sessionId);
         if (emitter == null) {
-            log.warn("No active SSE emitter for sessionId='{}'. Response dropped.", sessionId);
+            log.warn("[MCP] No active SSE session for sessionId={} \u2014 response dropped (client may have disconnected)", sessionId);
             return;
         }
 
@@ -294,9 +294,9 @@ public class McpSseController {
             emitter.send(SseEmitter.event()
                     .name("message")
                     .data(objectMapper.writeValueAsString(response)));
-            log.debug("Sent SSE response for sessionId='{}'", sessionId);
+            log.debug("[MCP] \u2192 Response sent (sessionId={})", sessionId);
         } catch (IOException e) {
-            log.warn("Failed to send SSE response for sessionId='{}': {}", sessionId, e.getMessage());
+            log.warn("[MCP] Failed to send response (sessionId={}): {}. Removing session.", sessionId, e.getMessage());
             activeEmitters.remove(sessionId);
         }
     }
@@ -347,7 +347,7 @@ public class McpSseController {
     public ResponseEntity<Map<String, Object>> checkpointState(
             @RequestBody ContextSnapshot snapshot) {
 
-        log.info("REST checkpoint_state for project='{}'", snapshot.projectName());
+        log.info("[REST] POST /mcp/checkpoint_state \u2014 project='{}'", snapshot.projectName());
         String docId = contextService.checkpointState(snapshot);
 
         return ResponseEntity.ok(Map.of(
@@ -371,7 +371,7 @@ public class McpSseController {
         }
 
         String projectName = body.get("project_name");
-        log.info("REST restore_state for project='{}'", projectName);
+        log.info("[REST] POST /mcp/restore_state \u2014 project='{}'", projectName);
 
         return contextService.restoreState(projectName)
                 .<ResponseEntity<?>>map(ResponseEntity::ok)

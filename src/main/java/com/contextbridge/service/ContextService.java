@@ -47,8 +47,8 @@ public class ContextService {
      * @return the ID of the document stored in Chroma DB
      */
     public String checkpointState(ContextSnapshot snapshot) {
-        log.info("Checkpointing state for project='{}' session='{}'",
-                snapshot.projectName(), snapshot.sessionId());
+        log.info("[Snapshot] Saving — project='{}', session='{}', goal='{}'",
+                snapshot.projectName(), snapshot.sessionId(), snapshot.currentGoal());
 
         String content = toJson(snapshot);
 
@@ -63,7 +63,7 @@ public class ContextService {
         );
 
         vectorStore.add(List.of(doc));
-        log.info("Snapshot stored successfully. doc_id='{}'", doc.getId());
+        log.info("[Snapshot] Saved successfully (docId={})", doc.getId());
         return doc.getId();
     }
 
@@ -76,7 +76,7 @@ public class ContextService {
      * @return the best matching snapshot, or empty if none found
      */
     public Optional<ContextSnapshot> restoreState(String projectName) {
-        log.info("Restoring state for project='{}'", projectName);
+        log.info("[Snapshot] Searching for latest snapshot of project='{}'", projectName);
 
         try {
             List<Document> results = vectorStore.similaritySearch(
@@ -89,17 +89,17 @@ public class ContextService {
             );
 
             if (results.isEmpty()) {
-                log.warn("No snapshot found for project='{}'", projectName);
+                log.info("[Snapshot] No snapshot found for project='{}'", projectName);
                 return Optional.empty();
             }
 
             Document doc = results.getFirst();
-            log.info("Snapshot retrieved for project='{}' score='{}'",
+            log.info("[Snapshot] Restored snapshot for project='{}' (similarity={})",
                     projectName, doc.getScore());
 
             return Optional.of(fromJson(doc.getText()));
         } catch (Exception e) {
-            log.warn("Similarity search failed for project='{}': {}", projectName, e.getMessage());
+            log.warn("[Snapshot] Search failed for project='{}': {}. Is ChromaDB running?", projectName, e.getMessage());
             return Optional.empty();
         }
     }
@@ -123,12 +123,12 @@ public class ContextService {
 
         try {
             List<Document> docs = vectorStore.similaritySearch(builder.build());
-            log.debug("Similarity search returned {} documents", docs.size());
+            log.debug("[Snapshot] List query returned {} result(s)", docs.size());
             return docs.stream()
                     .map(doc -> fromJson(doc.getText()))
                     .toList();
         } catch (Exception e) {
-            log.warn("Similarity search failed (collection may be empty): {}", e.getMessage());
+            log.warn("[Snapshot] List query failed (ChromaDB may be unavailable or collection empty): {}", e.getMessage());
             return List.of();
         }
     }
@@ -147,7 +147,8 @@ public class ContextService {
         try {
             return objectMapper.readValue(json, ContextSnapshot.class);
         } catch (JsonProcessingException e) {
-            log.error("Failed to deserialize snapshot from Chroma: {}", json, e);
+            log.error("[Snapshot] Failed to deserialize snapshot JSON — data may be corrupt: {}",
+                    json.length() > 200 ? json.substring(0, 200) + "..." : json, e);
             throw new IllegalStateException("Failed to deserialize ContextSnapshot", e);
         }
     }

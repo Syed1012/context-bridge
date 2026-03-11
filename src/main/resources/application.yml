@@ -37,7 +37,11 @@ management:
       show-details: when-authorized
 
 # ── Logging ───────────────────────────────────────────────────────────────────
+# Default: INFO for clean output. Set individual packages to DEBUG when troubleshooting.
 logging:
   level:
-    com.contextbridge: DEBUG
-    org.springframework.ai: INFO
+    com.contextbridge: INFO
+    org.springframework.ai: WARN
+    # Uncomment below to enable verbose request-level logging during development:
+    # com.contextbridge.controller: DEBUG
+    # com.contextbridge.service: DEBUG

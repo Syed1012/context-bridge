@@ -36,7 +36,7 @@ public class SnapshotRestController {
         public ResponseEntity<List<ContextSnapshot>> listSnapshots(
                         @RequestParam(required = false) String project) {
 
-                log.debug("REST list snapshots project='{}'", project);
+                log.debug("[REST] GET /api/snapshots (filter: {})", project != null ? project : "all");
                 return ResponseEntity.ok(contextService.listSnapshots(project));
         }
 
@@ -45,7 +45,7 @@ public class SnapshotRestController {
         public ResponseEntity<?> restoreSnapshot(
                         @RequestParam String project) {
 
-                log.debug("REST restore snapshot project='{}'", project);
+                log.debug("[REST] GET /api/snapshots/restore (project='{}')", project);
                 return contextService.restoreState(project)
                                 .<ResponseEntity<?>>map(ResponseEntity::ok)
                                 .orElse(ResponseEntity.ok(Map.of(
@@ -58,7 +58,7 @@ public class SnapshotRestController {
         public ResponseEntity<Map<String, Object>> saveSnapshot(
                         @RequestBody ContextSnapshot snapshot) {
 
-                log.info("REST checkpoint snapshot project='{}'", snapshot.projectName());
+                log.info("[REST] POST /api/snapshots — saving snapshot for project='{}'", snapshot.projectName());
                 String docId = contextService.checkpointState(snapshot);
                 return ResponseEntity.ok(Map.of(
                                 "status", "ok",

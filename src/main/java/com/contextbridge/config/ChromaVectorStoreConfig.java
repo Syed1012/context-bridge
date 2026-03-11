@@ -49,7 +49,7 @@ public class ChromaVectorStoreConfig {
     @Bean
     public ChromaVectorStore vectorStore(ChromaApi chromaApi, EmbeddingModel embeddingModel) {
         String chromaUrl = "http://" + chromaHost + ":" + chromaPort;
-        log.info("Connecting to ChromaDB at {} with collection '{}'", chromaUrl, collectionName);
+        log.info("[Chroma] Connecting to {} — collection '{}'", chromaUrl, collectionName);
 
         // Pre-create the collection using ChromaApi which handles JSON serialization
         // correctly. This avoids the error-message mismatch in getCollection().
@@ -72,13 +72,13 @@ public class ChromaVectorStoreConfig {
             // Try to get the collection first
             var collection = chromaApi.getCollection(DEFAULT_TENANT, DEFAULT_DATABASE, collectionName);
             if (collection != null) {
-                log.info("Chroma collection '{}' already exists.", collectionName);
+                log.info("[Chroma] Collection '{}' verified — ready", collectionName);
                 return;
             }
         } catch (Exception e) {
             // getCollection throws RuntimeException if the error message doesn't match
             // the expected pattern (Chroma 0.5.x compat issue) — that's expected.
-            log.debug("getCollection threw (expected with Chroma 0.5.x): {}", e.getMessage());
+            log.debug("[Chroma] Collection lookup failed (expected on Chroma 0.5.x): {}", e.getMessage());
         }
 
         // Collection doesn't exist or couldn't be checked — try to create it
@@ -86,11 +86,11 @@ public class ChromaVectorStoreConfig {
             var created = chromaApi.createCollection(DEFAULT_TENANT, DEFAULT_DATABASE,
                     new ChromaApi.CreateCollectionRequest(collectionName));
             if (created != null) {
-                log.info("Chroma collection '{}' created (id={}).", collectionName, created.id());
+                log.info("[Chroma] Collection '{}' created (id={})", collectionName, created.id());
             }
         } catch (Exception e) {
             // If creation fails with "already exists" that's fine (concurrent startup)
-            log.warn("Could not create collection '{}': {}. It may already exist.",
+            log.warn("[Chroma] Could not create collection '{}': {}. If ChromaDB is running, it may already exist — safe to ignore.",
                     collectionName, e.getMessage());
         }
     }
