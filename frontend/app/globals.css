@@ -1,26 +1,115 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #06060b;
+  --foreground: #e4e4e7;
+  --accent-violet: #8b5cf6;
+  --accent-cyan: #22d3ee;
+  --accent-emerald: #34d399;
+  --accent-amber: #fbbf24;
+  --accent-rose: #fb7185;
+  --surface: rgba(255, 255, 255, 0.03);
+  --surface-hover: rgba(255, 255, 255, 0.06);
+  --border: rgba(255, 255, 255, 0.08);
+  --border-hover: rgba(139, 92, 246, 0.3);
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  --font-sans: var(--font-inter);
+  --font-mono: var(--font-inter);
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+}
+
+/* ── Scrollbar ──────────────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(139, 92, 246, 0.2); border-radius: 999px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(139, 92, 246, 0.4); }
+
+/* ── Glass Surface ──────────────────────────────────────────────────── */
+.glass {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(12px);
+}
+
+.glass-hover:hover {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(139, 92, 246, 0.3);
+  box-shadow: 0 0 30px rgba(139, 92, 246, 0.05);
+}
+
+/* ── Gradient Text ──────────────────────────────────────────────────── */
+.gradient-text {
+  background: linear-gradient(135deg, #8b5cf6 0%, #22d3ee 50%, #34d399 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* ── Glow Effects ───────────────────────────────────────────────────── */
+.glow-violet { box-shadow: 0 0 40px rgba(139, 92, 246, 0.08); }
+.glow-cyan { box-shadow: 0 0 40px rgba(34, 211, 238, 0.08); }
+.glow-emerald { box-shadow: 0 0 40px rgba(52, 211, 153, 0.08); }
+
+/* ── Status Pulse ───────────────────────────────────────────────────── */
+@keyframes pulse-glow {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+.status-pulse {
+  animation: pulse-glow 2s ease-in-out infinite;
+}
+
+/* ── Fade In ────────────────────────────────────────────────────────── */
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.fade-in-up {
+  animation: fadeInUp 0.5s ease-out forwards;
+}
+
+/* ── Search Input ───────────────────────────────────────────────────── */
+.search-input {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  transition: all 0.3s ease;
+}
+.search-input:focus {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(139, 92, 246, 0.5);
+  box-shadow: 0 0 20px rgba(139, 92, 246, 0.1);
+  outline: none;
+}
+
+/* ── Tab Styles ─────────────────────────────────────────────────────── */
+.tab-active {
+  background: rgba(139, 92, 246, 0.15);
+  border-color: rgba(139, 92, 246, 0.4);
+  color: #c4b5fd;
+}
+
+.tab-inactive {
+  background: transparent;
+  border-color: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.4);
+}
+.tab-inactive:hover {
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(255, 255, 255, 0.7);
 }
