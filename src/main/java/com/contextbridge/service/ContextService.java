@@ -196,6 +196,93 @@ public class ContextService {
         }
     }
 
+    // ── Analytics ──────────────────────────────────────────────────────────────
+
+    /**
+     * Returns aggregate statistics for each project.
+     * Computes from all stored snapshots — no separate analytics table needed.
+     */
+    public List<Map<String, Object>> getProjectStats() {
+        log.info("[Analytics] Computing project statistics");
+        List<ContextSnapshot> allSnapshots = listSnapshots(null);
+
+        // Group by project name
+        Map<String, List<ContextSnapshot>> byProject = allSnapshots.stream()
+                .collect(java.util.stream.Collectors.groupingBy(ContextSnapshot::projectName));
+
+        List<Map<String, Object>> stats = new java.util.ArrayList<>();
+        for (var entry : byProject.entrySet()) {
+            List<ContextSnapshot> snapshots = entry.getValue();
+            // Already sorted newest-first from listSnapshots
+            ContextSnapshot latest = snapshots.getFirst();
+
+            long completed = snapshots.stream()
+                    .filter(s -> "completed".equals(s.progressStatus())).count();
+            long inProgress = snapshots.stream()
+                    .filter(s -> "in_progress".equals(s.progressStatus())).count();
+            long blocked = snapshots.stream()
+                    .filter(s -> "blocked".equals(s.progressStatus())).count();
+
+            Map<String, Object> projectStat = new LinkedHashMap<>();
+            projectStat.put("project_name", entry.getKey());
+            projectStat.put("total_sessions", snapshots.size());
+            projectStat.put("last_active", latest.timestamp().toString());
+            projectStat.put("latest_goal", latest.currentGoal());
+            projectStat.put("latest_status", Optional.ofNullable(latest.progressStatus()).orElse("unknown"));
+            projectStat.put("completed", completed);
+            projectStat.put("in_progress", inProgress);
+            projectStat.put("blocked", blocked);
+            projectStat.put("tech_stack", latest.techStack() != null ? latest.techStack() : List.of());
+            stats.add(projectStat);
+        }
+
+        // Sort by last_active descending
+        stats.sort((a, b) -> ((String) b.get("last_active")).compareTo((String) a.get("last_active")));
+        log.info("[Analytics] Computed stats for {} project(s)", stats.size());
+        return stats;
+    }
+
+    /**
+     * Searches across all key_decisions_log entries in stored snapshots.
+     * Returns matching decisions with their source project and session context.
+     */
+    public List<Map<String, Object>> searchDecisions(String query) {
+        log.info("[Decisions] Searching for '{}'", query);
+        String lowerQuery = query.toLowerCase();
+
+        List<ContextSnapshot> allSnapshots = listSnapshots(null);
+        List<Map<String, Object>> matches = new java.util.ArrayList<>();
+
+        for (ContextSnapshot snapshot : allSnapshots) {
+            if (snapshot.keyDecisionsLog() == null || snapshot.keyDecisionsLog().isEmpty()) {
+                continue;
+            }
+            for (ContextSnapshot.KeyDecision decision : snapshot.keyDecisionsLog()) {
+                boolean matchesDecision = decision.decision() != null
+                        && decision.decision().toLowerCase().contains(lowerQuery);
+                boolean matchesRationale = decision.rationale() != null
+                        && decision.rationale().toLowerCase().contains(lowerQuery);
+                boolean matchesAlts = decision.alternativesConsidered() != null
+                        && decision.alternativesConsidered().toLowerCase().contains(lowerQuery);
+
+                if (matchesDecision || matchesRationale || matchesAlts) {
+                    Map<String, Object> match = new LinkedHashMap<>();
+                    match.put("project_name", snapshot.projectName());
+                    match.put("session_id", snapshot.sessionId());
+                    match.put("timestamp", snapshot.timestamp().toString());
+                    match.put("goal_context", snapshot.currentGoal());
+                    match.put("decision", decision.decision());
+                    match.put("rationale", decision.rationale());
+                    match.put("alternatives_considered", decision.alternativesConsidered());
+                    matches.add(match);
+                }
+            }
+        }
+
+        log.info("[Decisions] Found {} matching decision(s)", matches.size());
+        return matches;
+    }
+
     // ── Helpers ────────────────────────────────────────────────────────────────
 
     private String toJson(ContextSnapshot snapshot) {

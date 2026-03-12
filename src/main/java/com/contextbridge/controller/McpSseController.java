@@ -50,8 +50,14 @@ public class McpSseController {
     /** Active SSE connections keyed by session ID. */
     private final Map<String, SseEmitter> activeEmitters = new ConcurrentHashMap<>();
 
+    /** Tracks when each session last had tool activity (for checkpoint reminders). */
+    private final Map<String, Long> lastActivity = new ConcurrentHashMap<>();
+
     /** Thread pool for SSE stream keep-alive tasks. */
     private final ExecutorService sseExecutor = Executors.newCachedThreadPool();
+
+    /** Auto-checkpoint reminder interval: 10 minutes of inactivity. */
+    private static final long CHECKPOINT_REMINDER_MS = 10 * 60 * 1000;
 
     // ── MCP Protocol Constants ─────────────────────────────────────────────────
     private static final String JSONRPC_VERSION = "2.0";
@@ -71,10 +77,12 @@ public class McpSseController {
         SseEmitter emitter = new SseEmitter(Long.MAX_VALUE);
 
         activeEmitters.put(sessionId, emitter);
+        lastActivity.put(sessionId, System.currentTimeMillis());
         log.info("[MCP] Client connected (sessionId={})", sessionId);
 
         emitter.onCompletion(() -> {
             activeEmitters.remove(sessionId);
+            lastActivity.remove(sessionId);
             log.info("[MCP] Client disconnected (sessionId={})", sessionId);
         });
         emitter.onTimeout(() -> {
@@ -83,6 +91,7 @@ public class McpSseController {
         });
         emitter.onError(e -> {
             activeEmitters.remove(sessionId);
+            lastActivity.remove(sessionId);
             log.warn("[MCP] SSE connection error (sessionId={}): {}", sessionId, e.getMessage());
         });
 
@@ -100,18 +109,50 @@ public class McpSseController {
             return emitter;
         }
 
-        // Keep-alive pings every 30s
+        // Keep-alive pings every 30s + auto-checkpoint reminders after inactivity
         sseExecutor.execute(() -> {
             try {
                 while (!Thread.currentThread().isInterrupted() && activeEmitters.containsKey(sessionId)) {
                     Thread.sleep(30_000);
-                    if (activeEmitters.containsKey(sessionId)) {
-                        emitter.send(SseEmitter.event().comment("keep-alive"));
+                    if (!activeEmitters.containsKey(sessionId)) break;
+
+                    // Keep-alive ping
+                    emitter.send(SseEmitter.event().comment("keep-alive"));
+
+                    // Check if a checkpoint reminder is needed
+                    Long lastTime = lastActivity.get(sessionId);
+                    if (lastTime != null) {
+                        long elapsed = System.currentTimeMillis() - lastTime;
+                        if (elapsed >= CHECKPOINT_REMINDER_MS) {
+                            // Send a reminder as a JSON-RPC notification (no id = notification)
+                            Map<String, Object> reminder = new LinkedHashMap<>();
+                            reminder.put("jsonrpc", JSONRPC_VERSION);
+                            reminder.put("method", "notifications/checkpoint_reminder");
+                            reminder.put("params", Map.of(
+                                    "message", "You've been working for a while without checkpointing. "
+                                            + "Consider calling checkpoint_state to save your progress.",
+                                    "minutes_since_last_activity", elapsed / 60_000));
+
+                            String json = objectMapper.writeValueAsString(reminder);
+                            emitter.send(SseEmitter.event()
+                                    .name("message")
+                                    .data(json));
+                            log.info("[MCP] Sent checkpoint reminder (sessionId={}, idle={}min)",
+                                    sessionId, elapsed / 60_000);
+
+                            // Reset so we don't spam — only remind once per inactivity window
+                            lastActivity.put(sessionId, System.currentTimeMillis());
+                        }
                     }
                 }
             } catch (IOException | InterruptedException e) {
                 log.debug("[MCP] Keep-alive stopped for sessionId={}", sessionId);
                 activeEmitters.remove(sessionId);
+                lastActivity.remove(sessionId);
+            } catch (Exception e) {
+                log.debug("[MCP] SSE loop error for sessionId={}: {}", sessionId, e.getMessage());
+                activeEmitters.remove(sessionId);
+                lastActivity.remove(sessionId);
             }
         });
 
@@ -132,6 +173,9 @@ public class McpSseController {
         String method = request.path("method").asText("");
         JsonNode id = request.path("id");
         JsonNode params = request.path("params");
+
+        // Reset inactivity timer — any message means the session is active
+        lastActivity.put(sessionId, System.currentTimeMillis());
 
         log.info("[MCP] \u2190 {} (sessionId={})", method, sessionId);
 
