@@ -64,4 +64,27 @@ public class SnapshotRestController {
                                 "status", "ok",
                                 "doc_id", docId));
         }
+
+        /**
+         * Semantic search across all snapshots — the dashboard's search bar calls this.
+         * Returns matching snapshots ordered by semantic relevance.
+         *
+         * @param q       natural language query (e.g. "session management implementation")
+         * @param project optional project filter
+         * @param limit   max results, defaults to 5
+         */
+        @GetMapping("/recall")
+        public ResponseEntity<Map<String, Object>> recallContext(
+                        @RequestParam String q,
+                        @RequestParam(required = false) String project,
+                        @RequestParam(defaultValue = "5") int limit) {
+
+                log.info("[REST] GET /api/snapshots/recall — q='{}', project={}", q,
+                                project != null ? project : "all");
+                List<ContextSnapshot> results = contextService.recallContext(q, project, Math.min(limit, 20));
+                return ResponseEntity.ok(Map.of(
+                                "query", q,
+                                "results_count", results.size(),
+                                "snapshots", results));
+        }
 }

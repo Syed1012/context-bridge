@@ -235,8 +235,8 @@ public class McpSseController {
         checkpointProps.put("unresolved_issues", Map.of("type", "string",
                 "description", "(Legacy) Bugs or pending tasks — prefer next_steps instead"));
 
-        List<Map<String, Object>> tools = List.of(
-                Map.of(
+        List<Map<String, Object>> tools = new ArrayList<>();
+        tools.add(Map.of(
                         "name", "checkpoint_state",
                         "description",
                         "Persist the current working context as a rich snapshot. "
@@ -247,19 +247,37 @@ public class McpSseController {
                                 "type", "object",
                                 "required", List.of("project_name", "session_id", "current_goal",
                                         "conversation_summary", "progress_status"),
-                                "properties", checkpointProps)),
-                Map.of(
+                                "properties", checkpointProps)));
+        tools.add(Map.of(
                         "name", "restore_state",
                         "description",
-                        "Retrieve the most relevant context snapshot for a project. "
-                                + "Call this at the start of a session to resume previous work, "
-                                + "or MID-CONVERSATION if you've lost track of earlier context.",
+                        "Retrieve the most recent context snapshot for a project. "
+                                + "Returns exactly what was stored — the latest checkpoint for this project. "
+                                + "Call at session start to resume work, or mid-conversation if context is fading.",
                         "inputSchema", Map.of(
                                 "type", "object",
                                 "required", List.of("project_name"),
                                 "properties", Map.of(
                                         "project_name", Map.of("type", "string",
-                                                "description", "Project name to retrieve context for")))));
+                                                "description", "Exact project name to retrieve context for")))));
+        tools.add(Map.of(
+                        "name", "recall",
+                        "description",
+                        "Search your AI memory using natural language. Finds relevant context snapshots "
+                                + "across ALL projects using semantic search. Use this when a user says things like "
+                                + "'remember how we implemented session management?' or 'find the auth work from last week'. "
+                                + "Returns matching sessions with full code changes, decisions, and summaries.",
+                        "inputSchema", Map.of(
+                                "type", "object",
+                                "required", List.of("query"),
+                                "properties", Map.of(
+                                        "query", Map.of("type", "string",
+                                                "description", "Natural language search — describe what you're looking for. "
+                                                        + "Example: 'OAuth2 session management implementation'"),
+                                        "project_name", Map.of("type", "string",
+                                                "description", "Optional — filter results to a specific project"),
+                                        "max_results", Map.of("type", "integer",
+                                                "description", "Max snapshots to return (default 5, max 20)")))));
 
         return jsonRpcResult(id, Map.of("tools", tools));
     }
@@ -316,6 +334,34 @@ public class McpSseController {
                     }
                 } else {
                     yield toolResult(id, "No context snapshot found for project: " + projectName, false);
+                }
+            }
+            case "recall" -> {
+                String query = arguments.path("query").asText("");
+                if (query.isBlank()) {
+                    yield toolResult(id, "Error: 'query' is required. Describe what you're looking for.", true);
+                }
+
+                String projectFilter = arguments.path("project_name").asText(null);
+                int maxResults = arguments.path("max_results").asInt(5);
+                maxResults = Math.min(maxResults, 20); // cap at 20
+
+                List<ContextSnapshot> results = contextService.recallContext(query, projectFilter, maxResults);
+                if (results.isEmpty()) {
+                    yield toolResult(id, "No matching context found for: " + query
+                            + ". Note: only checkpointed sessions are searchable — "
+                            + "make sure to call checkpoint_state during or after sessions.", false);
+                }
+
+                try {
+                    String json = objectMapper.writerWithDefaultPrettyPrinter()
+                            .writeValueAsString(Map.of(
+                                    "query", query,
+                                    "results_count", results.size(),
+                                    "snapshots", results));
+                    yield toolResult(id, json, false);
+                } catch (Exception e) {
+                    yield toolResult(id, "Error serializing results: " + e.getMessage(), true);
                 }
             }
             default -> {

@@ -74,22 +74,23 @@ public class ContextService {
         return doc.getId();
     }
 
-    // ── Restore ────────────────────────────────────────────────────────────────
-
     /**
-     * Retrieves the most semantically relevant snapshot for the given project.
+     * Retrieves the most recent snapshot for the given project.
+     * Uses exact metadata filtering (NOT semantic similarity) to ensure
+     * we return exactly what was stored, not fuzzy matches from other projects.
      *
-     * @param projectName the project to search for
-     * @return the best matching snapshot, or empty if none found
+     * @param projectName the project to retrieve context for
+     * @return the most recent snapshot, or empty if none found
      */
     public Optional<ContextSnapshot> restoreState(String projectName) {
         log.info("[Snapshot] Searching for latest snapshot of project='{}'", projectName);
 
         try {
+            // Use a neutral query — we only care about the metadata filter
             List<Document> results = vectorStore.similaritySearch(
                     SearchRequest.builder()
-                            .query(projectName)
-                            .topK(1)
+                            .query("context snapshot for project " + projectName)
+                            .topK(10)
                             .similarityThreshold(0.0)
                             .filterExpression("project_name == '" + projectName + "'")
                             .build()
@@ -100,23 +101,77 @@ public class ContextService {
                 return Optional.empty();
             }
 
-            Document doc = results.getFirst();
-            log.info("[Snapshot] Restored snapshot for project='{}' (similarity={})",
-                    projectName, doc.getScore());
+            // Pick the most recent by timestamp (not by similarity score)
+            ContextSnapshot latest = results.stream()
+                    .map(doc -> fromJson(doc.getText()))
+                    .sorted((a, b) -> b.timestamp().compareTo(a.timestamp()))
+                    .findFirst()
+                    .orElse(null);
 
-            return Optional.of(fromJson(doc.getText()));
+            if (latest != null) {
+                log.info("[Snapshot] Restored latest snapshot for project='{}' (timestamp={})",
+                        projectName, latest.timestamp());
+            }
+
+            return Optional.ofNullable(latest);
         } catch (Exception e) {
             log.warn("[Snapshot] Search failed for project='{}': {}. Is ChromaDB running?", projectName, e.getMessage());
             return Optional.empty();
         }
     }
 
+    // ── Recall (Semantic Search) ──────────────────────────────────────────────
+
+    /**
+     * Cross-project semantic search — finds snapshots whose content is
+     * semantically similar to the given natural-language query.
+     *
+     * <p>This is where ChromaDB's vector search truly shines. Example queries:
+     * <ul>
+     *   <li>"How did I implement session management?"</li>
+     *   <li>"Authentication with OAuth2"</li>
+     *   <li>"Database migration strategies"</li>
+     * </ul>
+     *
+     * @param query         natural-language search query
+     * @param projectName   optional — filter to a specific project, or null for all projects
+     * @param maxResults    maximum number of snapshots to return
+     * @return matching snapshots ordered by semantic relevance
+     */
+    public List<ContextSnapshot> recallContext(String query, String projectName, int maxResults) {
+        log.info("[Recall] Searching for '{}' (project={})", query,
+                projectName != null ? projectName : "all");
+
+        try {
+            SearchRequest.Builder builder = SearchRequest.builder()
+                    .query(query)
+                    .topK(maxResults)
+                    .similarityThreshold(0.3); // Only return genuinely relevant results
+
+            if (projectName != null && !projectName.isBlank()) {
+                builder.filterExpression("project_name == '" + projectName + "'");
+            }
+
+            List<Document> results = vectorStore.similaritySearch(builder.build());
+            log.info("[Recall] Found {} result(s)", results.size());
+
+            return results.stream()
+                    .map(doc -> fromJson(doc.getText()))
+                    .toList();
+        } catch (Exception e) {
+            log.warn("[Recall] Search failed: {}. Is ChromaDB running?", e.getMessage());
+            return List.of();
+        }
+    }
+
+    // ── List ───────────────────────────────────────────────────────────────────
+
     /**
      * Returns all snapshots for a given project (no semantic ranking — used by the frontend list).
      */
     public List<ContextSnapshot> listSnapshots(String projectName) {
         String query = (projectName != null && !projectName.isBlank())
-                ? projectName
+                ? "context snapshot for project " + projectName
                 : "context snapshot";
 
         SearchRequest.Builder builder = SearchRequest.builder()
@@ -133,6 +188,7 @@ public class ContextService {
             log.debug("[Snapshot] List query returned {} result(s)", docs.size());
             return docs.stream()
                     .map(doc -> fromJson(doc.getText()))
+                    .sorted((a, b) -> b.timestamp().compareTo(a.timestamp()))
                     .toList();
         } catch (Exception e) {
             log.warn("[Snapshot] List query failed (ChromaDB may be unavailable or collection empty): {}", e.getMessage());
