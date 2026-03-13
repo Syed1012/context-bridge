@@ -211,18 +211,6 @@ context-bridge/
 - **Teams** where multiple people (or AIs) work on the same codebase across sessions
 - **Anyone** who's ever started a new AI chat and thought *"I wish it remembered what we did yesterday"*
 
-## What's Next
-
-- [ ] Multi-project snapshot dashboard with filtering
-- [ ] Snapshot diff view (what changed between sessions)
-- [ ] Auto-checkpoint triggers (time-based, file-save-based)
-- [ ] Support for additional MCP transports (stdio, WebSocket)
-- [ ] Snapshot sharing across team members
-
-## Contributing
-
-We'd love your help! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
-
 ## License
 
-MIT — use it, fork it, make your AI remember things.
+This project is licensed under the [MIT License](LICENSE) — use it, fork it, make your AI remember things.
