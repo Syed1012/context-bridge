@@ -62,7 +62,7 @@ Open an issue tagged `enhancement` with:
 
 ### Submitting Code
 
-1. **Create a branch** from `main`:
+1. **Create a branch** from `prod`:
    ```bash
    git checkout -b feature/your-feature-name
    ```
@@ -92,7 +92,14 @@ Open an issue tagged `enhancement` with:
    - `refactor:` — code restructuring without behavior change
    - `chore:` — build, CI, or tooling changes
 
-5. **Open a Pull Request** against `main` with a clear description of what and why.
+5. **Open a Pull Request** against `prod` with a clear description of what and why.
+
+## Branch Protection & Code Quality
+
+To ensure the stability of the project, the `prod` branch is protected:
+- **No Direct Pushes:** You cannot push directly to `prod`. All changes must be made via Pull Requests.
+- **Automated Checks:** Every PR must pass our CI/CD pipeline (backend tests and frontend build) before it can be merged.
+- **Approvals Required:** Every PR requires at least 1 approval from a project maintainer.
 
 ## Code Style
 
