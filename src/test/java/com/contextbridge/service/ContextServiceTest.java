@@ -1,9 +1,10 @@
 package com.contextbridge.service;
 
 import com.contextbridge.model.ContextSnapshot;
-import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -43,158 +44,222 @@ class ContextServiceTest {
 
     @BeforeEach
     void setUp() {
-        sampleSnapshot = new ContextSnapshot(
-                Instant.now(),
-                "test-project",
-                "session-123",
-                "Testing current goal",
-                List.of("src/file1.txt"),
-                null,
-                null,
-                "Testing summary",
-                List.of("Java"),
-                List.of(),
-                List.of(new ContextSnapshot.KeyDecision("Test decision", "Test rationale", "Test alternatives")),
-                "in_progress",
-                List.of("Next step"),
-                List.of()
-        );
+        sampleSnapshot = ContextSnapshot.builder()
+                .timestamp(Instant.now())
+                .projectName("test-project")
+                .sessionId("session-123")
+                .currentGoal("Implement authentication")
+                .conversationSummary("Set up OAuth2 login flow")
+                .progressStatus("in_progress")
+                .activeFiles(List.of("src/main/java/Config.java"))
+                .techStack(List.of("Java 21", "Spring Boot"))
+                .keyDecisionsLog(List.of(
+                        new ContextSnapshot.KeyDecision("Use OAuth2", "Industry standard", "Session tokens")))
+                .nextSteps(List.of("Write integration tests"))
+                .build();
     }
 
-    @Test
-    void checkpointState_ShouldSaveSnapshotWithMetadata() throws Exception {
-        // Arrange
-        String json = "{\"projectName\": \"test-project\"}";
-        when(objectMapper.writeValueAsString(any(ContextSnapshot.class))).thenReturn(json);
+    // ── Checkpoint Tests ─────────────────────────────────────────────────────
 
-        // Act
-        String docId = contextService.checkpointState(sampleSnapshot);
+    @Nested
+    @DisplayName("checkpointState")
+    class CheckpointStateTests {
 
-        // Assert
-        verify(vectorStore, times(1)).add(documentListCaptor.capture());
-        List<Document> savedDocs = documentListCaptor.getValue();
-        assertThat(savedDocs).hasSize(1);
+        @Test
+        @DisplayName("should persist snapshot with correct metadata")
+        void shouldSaveSnapshotWithMetadata() throws Exception {
+            String json = "{\"projectName\": \"test-project\"}";
+            when(objectMapper.writeValueAsString(any(ContextSnapshot.class))).thenReturn(json);
 
-        Document savedDoc = savedDocs.get(0);
-        assertThat(docId).isEqualTo(savedDoc.getId());
-        assertThat(savedDoc.getText()).isEqualTo(json);
+            String docId = contextService.checkpointState(sampleSnapshot);
 
-        Map<String, Object> metadata = savedDoc.getMetadata();
-        assertThat(metadata).containsEntry("project_name", "test-project");
-        assertThat(metadata).containsEntry("session_id", "session-123");
-        assertThat(metadata).containsEntry("progress_status", "in_progress");
+            verify(vectorStore, times(1)).add(documentListCaptor.capture());
+            List<Document> savedDocs = documentListCaptor.getValue();
+            assertThat(savedDocs).hasSize(1);
+
+            Document savedDoc = savedDocs.getFirst();
+            assertThat(docId).isEqualTo(savedDoc.getId());
+            assertThat(savedDoc.getText()).isEqualTo(json);
+
+            Map<String, Object> metadata = savedDoc.getMetadata();
+            assertThat(metadata)
+                    .containsEntry("project_name", "test-project")
+                    .containsEntry("session_id", "session-123")
+                    .containsEntry("progress_status", "in_progress");
+        }
     }
 
-    @Test
-    void restoreState_ShouldReturnMostRecentSnapshot() throws Exception {
-        // Arrange
-        String json1 = "{\"projectName\": \"test-project\", \"timestamp\": \"2023-01-01T10:00:00Z\"}";
-        String json2 = "{\"projectName\": \"test-project\", \"timestamp\": \"2023-01-01T12:00:00Z\"}"; // Newer
+    // ── Restore Tests ────────────────────────────────────────────────────────
 
-        Document doc1 = new Document(json1);
-        Document doc2 = new Document(json2);
+    @Nested
+    @DisplayName("restoreState")
+    class RestoreStateTests {
 
-        ContextSnapshot snapshot1 = new ContextSnapshot(Instant.parse("2023-01-01T10:00:00Z"), "test-project", "s1", null, null, null, null, null, null, null, null, null, null, null);
-        ContextSnapshot snapshot2 = new ContextSnapshot(Instant.parse("2023-01-01T12:00:00Z"), "test-project", "s2", null, null, null, null, null, null, null, null, null, null, null);
+        @Test
+        @DisplayName("should return the most recent snapshot by timestamp")
+        void shouldReturnMostRecentSnapshot() throws Exception {
+            String json1 = "{\"ts\":\"2023-01-01T10:00:00Z\"}";
+            String json2 = "{\"ts\":\"2023-01-01T12:00:00Z\"}";
 
-        when(vectorStore.similaritySearch(any(SearchRequest.class))).thenReturn(List.of(doc1, doc2));
-        when(objectMapper.readValue(json1, ContextSnapshot.class)).thenReturn(snapshot1);
-        when(objectMapper.readValue(json2, ContextSnapshot.class)).thenReturn(snapshot2);
+            ContextSnapshot older = ContextSnapshot.builder()
+                    .timestamp(Instant.parse("2023-01-01T10:00:00Z"))
+                    .projectName("test-project").sessionId("s1").build();
+            ContextSnapshot newer = ContextSnapshot.builder()
+                    .timestamp(Instant.parse("2023-01-01T12:00:00Z"))
+                    .projectName("test-project").sessionId("s2").build();
 
-        // Act
-        Optional<ContextSnapshot> result = contextService.restoreState("test-project");
+            when(vectorStore.similaritySearch(any(SearchRequest.class)))
+                    .thenReturn(List.of(new Document(json1), new Document(json2)));
+            when(objectMapper.readValue(json1, ContextSnapshot.class)).thenReturn(older);
+            when(objectMapper.readValue(json2, ContextSnapshot.class)).thenReturn(newer);
 
-        // Assert
-        assertThat(result).isPresent();
-        assertThat(result.get().sessionId()).isEqualTo("s2"); // Should pick the newer one
+            Optional<ContextSnapshot> result = contextService.restoreState("test-project");
+
+            assertThat(result).isPresent();
+            assertThat(result.get().sessionId()).isEqualTo("s2");
+        }
+
+        @Test
+        @DisplayName("should return empty when no snapshots exist")
+        void shouldReturnEmptyWhenNoSnapshotsFound() {
+            when(vectorStore.similaritySearch(any(SearchRequest.class))).thenReturn(List.of());
+
+            Optional<ContextSnapshot> result = contextService.restoreState("nonexistent");
+
+            assertThat(result).isEmpty();
+        }
+
+        @Test
+        @DisplayName("should return empty when vector store throws exception")
+        void shouldReturnEmptyOnSearchFailure() {
+            when(vectorStore.similaritySearch(any(SearchRequest.class)))
+                    .thenThrow(new RuntimeException("ChromaDB unavailable"));
+
+            Optional<ContextSnapshot> result = contextService.restoreState("test-project");
+
+            assertThat(result).isEmpty();
+        }
     }
 
-    @Test
-    void restoreState_WhenNoSnapshotsFound_ShouldReturnEmpty() {
-        // Arrange
-        when(vectorStore.similaritySearch(any(SearchRequest.class))).thenReturn(List.of());
+    // ── List Tests ───────────────────────────────────────────────────────────
 
-        // Act
-        Optional<ContextSnapshot> result = contextService.restoreState("test-project");
+    @Nested
+    @DisplayName("listSnapshots")
+    class ListSnapshotsTests {
 
-        // Assert
-        assertThat(result).isEmpty();
+        @Test
+        @DisplayName("should return snapshots sorted newest-first")
+        void shouldReturnSnapshotsSortedByTimestamp() throws Exception {
+            String json1 = "{\"s\":\"s1\"}";
+            String json2 = "{\"s\":\"s2\"}";
+
+            ContextSnapshot older = ContextSnapshot.builder()
+                    .timestamp(Instant.parse("2024-01-01T10:00:00Z"))
+                    .projectName("proj").sessionId("s1").build();
+            ContextSnapshot newer = ContextSnapshot.builder()
+                    .timestamp(Instant.parse("2024-01-01T12:00:00Z"))
+                    .projectName("proj").sessionId("s2").build();
+
+            when(vectorStore.similaritySearch(any(SearchRequest.class)))
+                    .thenReturn(List.of(new Document(json1), new Document(json2)));
+            when(objectMapper.readValue(json1, ContextSnapshot.class)).thenReturn(older);
+            when(objectMapper.readValue(json2, ContextSnapshot.class)).thenReturn(newer);
+
+            List<ContextSnapshot> results = contextService.listSnapshots("proj");
+
+            assertThat(results).hasSize(2);
+            assertThat(results.getFirst().sessionId()).isEqualTo("s2");
+            assertThat(results.getLast().sessionId()).isEqualTo("s1");
+        }
     }
 
-    @Test
-    void listSnapshots_ShouldReturnAllSnapshotsSorted() throws Exception {
-        // Arrange
-        String json1 = "{\"sessionId\": \"s1\"}";
-        ContextSnapshot snapshot1 = new ContextSnapshot(Instant.parse("2024-01-01T10:00:00Z"), "proj", "s1", null, null, null, null, null, null, null, null, null, null, null);
+    // ── Analytics Tests ──────────────────────────────────────────────────────
 
-        String json2 = "{\"sessionId\": \"s2\"}";
-        ContextSnapshot snapshot2 = new ContextSnapshot(Instant.parse("2024-01-01T12:00:00Z"), "proj", "s2", null, null, null, null, null, null, null, null, null, null, null);
+    @Nested
+    @DisplayName("getProjectStats")
+    class GetProjectStatsTests {
 
-        when(vectorStore.similaritySearch(any(SearchRequest.class)))
-                .thenReturn(List.of(new Document(json1), new Document(json2)));
-        
-        when(objectMapper.readValue(json1, ContextSnapshot.class)).thenReturn(snapshot1);
-        when(objectMapper.readValue(json2, ContextSnapshot.class)).thenReturn(snapshot2);
+        @Test
+        @DisplayName("should aggregate statistics per project correctly")
+        void shouldAggregateCorrectly() throws Exception {
+            String json1 = "{\"s\":\"s1\"}";
+            String json2 = "{\"s\":\"s2\"}";
 
-        // Act
-        List<ContextSnapshot> results = contextService.listSnapshots("proj");
+            ContextSnapshot completed = ContextSnapshot.builder()
+                    .timestamp(Instant.parse("2024-01-01T10:00:00Z"))
+                    .projectName("projA").sessionId("s1")
+                    .currentGoal("Goal 1").progressStatus("completed").build();
+            ContextSnapshot inProgress = ContextSnapshot.builder()
+                    .timestamp(Instant.parse("2024-01-01T12:00:00Z"))
+                    .projectName("projA").sessionId("s2")
+                    .currentGoal("Goal 2").progressStatus("in_progress").build();
 
-        // Assert
-        assertThat(results).hasSize(2);
-        assertThat(results.get(0).sessionId()).isEqualTo("s2"); // Newer first
-        assertThat(results.get(1).sessionId()).isEqualTo("s1");
+            when(vectorStore.similaritySearch(any(SearchRequest.class)))
+                    .thenReturn(List.of(new Document(json1), new Document(json2)));
+            when(objectMapper.readValue(json1, ContextSnapshot.class)).thenReturn(completed);
+            when(objectMapper.readValue(json2, ContextSnapshot.class)).thenReturn(inProgress);
+
+            List<Map<String, Object>> stats = contextService.getProjectStats();
+
+            assertThat(stats).hasSize(1);
+            Map<String, Object> projStats = stats.getFirst();
+            assertThat(projStats)
+                    .containsEntry("project_name", "projA")
+                    .containsEntry("total_sessions", 2)
+                    .containsEntry("completed", 1L)
+                    .containsEntry("in_progress", 1L)
+                    .containsEntry("latest_goal", "Goal 2");
+        }
     }
 
-    @Test
-    void getProjectStats_ShouldAggregateCorrectly() throws Exception {
-        // Arrange
-        String json1 = "{\"sessionId\": \"s1\"}";
-        ContextSnapshot snapshot1 = new ContextSnapshot(Instant.parse("2024-01-01T10:00:00Z"), "projA", "s1", "Goal 1", null, null, null, null, null, null, null, "completed", null, null);
+    // ── Decision Search Tests ────────────────────────────────────────────────
 
-        String json2 = "{\"sessionId\": \"s2\"}";
-        ContextSnapshot snapshot2 = new ContextSnapshot(Instant.parse("2024-01-01T12:00:00Z"), "projA", "s2", "Goal 2", null, null, null, null, null, null, null, "in_progress", null, null);
+    @Nested
+    @DisplayName("searchDecisions")
+    class SearchDecisionsTests {
 
-        when(vectorStore.similaritySearch(any(SearchRequest.class)))
-                .thenReturn(List.of(new Document(json1), new Document(json2)));
-        
-        when(objectMapper.readValue(json1, ContextSnapshot.class)).thenReturn(snapshot1);
-        when(objectMapper.readValue(json2, ContextSnapshot.class)).thenReturn(snapshot2);
+        @Test
+        @DisplayName("should return decisions matching the query")
+        void shouldReturnMatchingDecisions() throws Exception {
+            String json1 = "{\"s\":\"s1\"}";
+            ContextSnapshot snapshot = ContextSnapshot.builder()
+                    .timestamp(Instant.parse("2024-01-01T10:00:00Z"))
+                    .projectName("projA").sessionId("s1").currentGoal("Goal")
+                    .progressStatus("in_progress")
+                    .keyDecisionsLog(List.of(
+                            new ContextSnapshot.KeyDecision("Use Postgres", "Better for relational data", "MySQL")))
+                    .build();
 
-        // Act
-        List<Map<String, Object>> stats = contextService.getProjectStats();
+            when(vectorStore.similaritySearch(any(SearchRequest.class)))
+                    .thenReturn(List.of(new Document(json1)));
+            when(objectMapper.readValue(json1, ContextSnapshot.class)).thenReturn(snapshot);
 
-        // Assert
-        assertThat(stats).hasSize(1);
-        Map<String, Object> projStats = stats.get(0);
-        assertThat(projStats.get("project_name")).isEqualTo("projA");
-        assertThat(projStats.get("total_sessions")).isEqualTo(2);
-        assertThat(projStats.get("completed")).isEqualTo(1L);
-        assertThat(projStats.get("in_progress")).isEqualTo(1L);
-        assertThat(projStats.get("latest_goal")).isEqualTo("Goal 2");
-    }
+            List<Map<String, Object>> matches = contextService.searchDecisions("postgres");
 
-    @Test
-    void searchDecisions_ShouldReturnMatches() throws Exception {
-        // Arrange
-        String json1 = "{\"sessionId\": \"s1\"}";
-        ContextSnapshot snapshotWithDecision = new ContextSnapshot(
-                Instant.parse("2024-01-01T10:00:00Z"), "projA", "s1", "Goal", null, null, null, null, null, null,
-                List.of(new ContextSnapshot.KeyDecision("Use Postgres", "Fits relational data better", "MySQL")),
-                "status", null, null
-        );
+            assertThat(matches).hasSize(1);
+            assertThat(matches.getFirst())
+                    .containsEntry("project_name", "projA")
+                    .containsEntry("decision", "Use Postgres");
+        }
 
-        when(vectorStore.similaritySearch(any(SearchRequest.class)))
-                .thenReturn(List.of(new Document(json1)));
-        
-        when(objectMapper.readValue(json1, ContextSnapshot.class)).thenReturn(snapshotWithDecision);
+        @Test
+        @DisplayName("should return empty list when no decisions match")
+        void shouldReturnEmptyWhenNoDecisionsMatch() throws Exception {
+            String json1 = "{\"s\":\"s1\"}";
+            ContextSnapshot snapshot = ContextSnapshot.builder()
+                    .timestamp(Instant.parse("2024-01-01T10:00:00Z"))
+                    .projectName("projA").sessionId("s1")
+                    .keyDecisionsLog(List.of(
+                            new ContextSnapshot.KeyDecision("Use Redis", "For caching", "Memcached")))
+                    .build();
 
-        // Act
-        List<Map<String, Object>> matches = contextService.searchDecisions("postgres");
+            when(vectorStore.similaritySearch(any(SearchRequest.class)))
+                    .thenReturn(List.of(new Document(json1)));
+            when(objectMapper.readValue(json1, ContextSnapshot.class)).thenReturn(snapshot);
 
-        // Assert
-        assertThat(matches).hasSize(1);
-        Map<String, Object> match = matches.get(0);
-        assertThat(match.get("project_name")).isEqualTo("projA");
-        assertThat(match.get("decision")).isEqualTo("Use Postgres");
+            List<Map<String, Object>> matches = contextService.searchDecisions("postgres");
+
+            assertThat(matches).isEmpty();
+        }
     }
 }

@@ -4,14 +4,13 @@ import com.contextbridge.service.ContextService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
-import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.http.MediaType;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 import java.util.List;
 import java.util.Map;
 
-import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -23,11 +22,11 @@ class AnalyticsRestControllerTest {
     @Autowired
     private MockMvc mockMvc;
 
-    @MockBean
+    @MockitoBean
     private ContextService contextService;
 
     @Test
-    void getStats_ShouldReturnList() throws Exception {
+    void getStats_ShouldReturnProjectStatistics() throws Exception {
         when(contextService.getProjectStats()).thenReturn(List.of(
                 Map.of("project_name", "project-a", "total_sessions", 5)
         ));
@@ -41,7 +40,7 @@ class AnalyticsRestControllerTest {
     }
 
     @Test
-    void searchDecisions_ShouldReturnList() throws Exception {
+    void searchDecisions_ShouldReturnMatchingDecisions() throws Exception {
         when(contextService.searchDecisions("postgres")).thenReturn(List.of(
                 Map.of("project_name", "project-a", "decision", "Use Postgres")
         ));
