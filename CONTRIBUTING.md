@@ -16,7 +16,7 @@ cd context-bridge
 **Prerequisites:**
 - Java 21+
 - Docker (for ChromaDB)
-- Node.js 18+ (for the frontend)
+- Node.js 22+ (for the frontend)
 - [Ollama](https://ollama.ai) with an embedding model (`nomic-embed-text`)
 
 **Start infrastructure:**
