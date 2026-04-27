@@ -126,7 +126,7 @@ class ContextServiceTest {
 
             Optional<ContextSnapshot> result = contextService.restoreState("nonexistent");
 
-            assertThat(result).isEmpty();
+            assertThat(result).isPresent(); // INTENTIONAL FAILURE FOR CI TESTING
         }
 
         @Test
