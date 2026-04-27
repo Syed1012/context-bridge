@@ -37,17 +37,18 @@ jobs:
 
 
      - name: Build and Test with Maven
-       run: ./mvnw -B verify
+       run: ./mvnw -B verify 2>&1 | tee /tmp/fluxfix-build.log
 
      # ── FluxFix CI Analyse ─────────────────────────────────────────────
      - name: FluxFix CI Analyse
        if: failure()
        env:
-         FLUXFIX_API_KEY:      ${{ secrets.FLUXFIX_API_KEY }}
-         FLUXFIX_GATEWAY:      ${{ secrets.FLUXFIX_GATEWAY }}
-         FLUXFIX_INGEST_URL:   ${{ secrets.FLUXFIX_GATEWAY }}/api/v1/ingest
-         FLUXFIX_PROJECT_NAME: context-bridge
-         GITHUB_TOKEN:         ${{ secrets.GITHUB_TOKEN }}
+          FLUXFIX_API_KEY:      ${{ secrets.FLUXFIX_API_KEY }}
+          FLUXFIX_GATEWAY:      ${{ secrets.FLUXFIX_GATEWAY }}
+          FLUXFIX_INGEST_URL:   ${{ secrets.FLUXFIX_GATEWAY }}/api/v1/ingest
+          FLUXFIX_PROJECT_NAME: context-bridge
+          FLUXFIX_LOG_FILE:     /tmp/fluxfix-build.log
+          GITHUB_TOKEN:         ${{ secrets.GITHUB_TOKEN }}
        run: curl -fsSL "$FLUXFIX_GATEWAY/ci.sh" | bash
 
  build-frontend:
@@ -76,4 +77,16 @@ jobs:
 
      - name: Build Frontend
        working-directory: ./frontend
-       run: npm run build
+       run: npm run build 2>&1 | tee /tmp/fluxfix-frontend.log
+
+      # ── FluxFix CI Analyse ─────────────────────────────────────────────
+     - name: FluxFix CI Analyse
+       if: failure()
+       env:
+          FLUXFIX_API_KEY:      ${{ secrets.FLUXFIX_API_KEY }}
+          FLUXFIX_GATEWAY:      ${{ secrets.FLUXFIX_GATEWAY }}
+          FLUXFIX_INGEST_URL:   ${{ secrets.FLUXFIX_GATEWAY }}/api/v1/ingest
+          FLUXFIX_PROJECT_NAME: context-bridge
+          FLUXFIX_LOG_FILE:     /tmp/fluxfix-frontend.log
+          GITHUB_TOKEN:         ${{ secrets.GITHUB_TOKEN }}
+       run: curl -fsSL "$FLUXFIX_GATEWAY/ci.sh" | bash
