@@ -1,0 +1,39 @@
+# .github/workflows/fluxfix-analyse.yml
+name: FluxFix — Analyse Build Failures
+
+# Runs on every PR. The FluxFix step only fires when an earlier step has
+# failed (`if: failure()`). It pipes the gateway-hosted ci.sh helper, which
+# pulls the failing job's logs and POSTs them to your FluxFix backend.
+on:
+  pull_request:
+    branches: ["**"]
+
+jobs:
+  build-and-analyse:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read           # required: ci.sh reads the run's job logs
+      pull-requests: write    # required: FluxFix posts the fix as a PR comment
+    steps:
+      - uses: actions/checkout@v4
+
+      # ── Your existing build / test steps go here ──────────────────
+      # Replace with your actual build commands. FluxFix only acts when one
+      # of these steps fails.
+      - name: Build & test
+        run: |
+          # e.g. mvn -B verify
+          # e.g. npm ci && npm test
+          echo "Run your build/tests here"
+
+      # ── FluxFix CI Analyse ─ only runs when an earlier step failed ─────
+      - name: FluxFix CI Analyse
+        if: failure()
+        env:
+          FLUXFIX_API_KEY:      ${{ secrets.FLUXFIX_API_KEY }}      # ← add to repo secrets
+          FLUXFIX_GATEWAY:      ${{ secrets.FLUXFIX_GATEWAY }}      # ← add to repo secrets (e.g. https://fluxfix.example.com)
+          FLUXFIX_INGEST_URL:   ${{ secrets.FLUXFIX_GATEWAY }}/api/v1/ingest
+          FLUXFIX_PROJECT_NAME: context-bridge
+          GITHUB_TOKEN:         ${{ secrets.GITHUB_TOKEN }}        # provided automatically by Actions
+        run: curl -fsSL "$FLUXFIX_GATEWAY/ci.sh" | bash
