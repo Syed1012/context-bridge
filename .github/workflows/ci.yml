@@ -1,98 +1,92 @@
 name: CI
 
-
 on:
- pull_request:
-   branches:
-     - prod
-     - dev
- push:
-   branches:
-     - prod
-     - dev
-
+  pull_request:
+    branches: [prod, dev]
+  push:
+    branches: [prod, dev]
 
 env:
- FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
- build-backend:
-   name: Build & Test Backend
-   runs-on: ubuntu-latest
-   permissions:
-     contents: read
-     actions: read            # required: ci.sh reads the run's job logs
-     pull-requests: write     # required: FluxFix posts the fix as a PR comment
-   steps:
-     - uses: actions/checkout@v4
+  build-backend:
+    name: Build & Test Backend
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
 
+      - name: Set up Java 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: 'maven'
 
-     - name: Set up Java 21
-       uses: actions/setup-java@v4
-       with:
-         java-version: '21'
-         distribution: 'temurin'
-         cache: 'maven'
+      - name: Build and Test with Maven
+        shell: bash
+        run: |
+          set -o pipefail
+          ./mvnw -B verify 2>&1 | tee /tmp/fluxfix-build.log
 
-
-     - name: Build and Test with Maven
-       shell: bash
-       run: |
-         set -o pipefail
-         ./mvnw -B verify 2>&1 | tee /tmp/fluxfix-build.log
-
-     # ── FluxFix CI Analyse ─────────────────────────────────────────────
-     - name: FluxFix CI Analyse
-       if: failure()
-       env:
+      # ── FluxFix CI Analyse ─────────────────────────────────────────────
+      - name: FluxFix CI Analyse
+        if: failure()
+        env:
           FLUXFIX_API_KEY:      ${{ secrets.FLUXFIX_API_KEY }}
           FLUXFIX_GATEWAY:      ${{ secrets.FLUXFIX_GATEWAY }}
           FLUXFIX_INGEST_URL:   ${{ secrets.FLUXFIX_GATEWAY }}/api/v1/ingest
           FLUXFIX_PROJECT_NAME: context-bridge
           FLUXFIX_LOG_FILE:     /tmp/fluxfix-build.log
           GITHUB_TOKEN:         ${{ secrets.GITHUB_TOKEN }}
-       run: curl -fsSL "$FLUXFIX_GATEWAY/ci.sh" | bash
+        shell: bash
+        run: |
+          set -o pipefail
+          curl -fsSL "$FLUXFIX_GATEWAY/ci.sh" | bash
 
- build-frontend:
-   name: Build Frontend
-   runs-on: ubuntu-latest
-   permissions:
-     contents: read
-     actions: read            # required: ci.sh reads the run's job logs
-     pull-requests: write     # required: FluxFix posts the fix as a PR comment
-   steps:
-     - uses: actions/checkout@v4
+  build-frontend:
+    name: Build Frontend
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
 
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: 'frontend/package-lock.json'
 
-     - name: Set up Node.js 22
-       uses: actions/setup-node@v4
-       with:
-         node-version: '22'
-         cache: 'npm'
-         cache-dependency-path: 'frontend/package-lock.json'
+      - name: Install Dependencies
+        working-directory: ./frontend
+        run: npm ci
 
-
-     - name: Install Dependencies
-       working-directory: ./frontend
-       run: npm ci
-
-
-     - name: Build Frontend
-       working-directory: ./frontend
-       shell: bash
-       run: |
-         set -o pipefail
-         npm run build 2>&1 | tee /tmp/fluxfix-frontend.log
+      - name: Build Frontend
+        working-directory: ./frontend
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run build 2>&1 | tee /tmp/fluxfix-frontend.log
 
       # ── FluxFix CI Analyse ─────────────────────────────────────────────
-     - name: FluxFix CI Analyse
-       if: failure()
-       env:
+      - name: FluxFix CI Analyse
+        if: failure()
+        env:
           FLUXFIX_API_KEY:      ${{ secrets.FLUXFIX_API_KEY }}
           FLUXFIX_GATEWAY:      ${{ secrets.FLUXFIX_GATEWAY }}
           FLUXFIX_INGEST_URL:   ${{ secrets.FLUXFIX_GATEWAY }}/api/v1/ingest
           FLUXFIX_PROJECT_NAME: context-bridge
           FLUXFIX_LOG_FILE:     /tmp/fluxfix-frontend.log
           GITHUB_TOKEN:         ${{ secrets.GITHUB_TOKEN }}
-       run: curl -fsSL "$FLUXFIX_GATEWAY/ci.sh" | bash
+        shell: bash
+        run: |
+          set -o pipefail
+          curl -fsSL "$FLUXFIX_GATEWAY/ci.sh" | bash
