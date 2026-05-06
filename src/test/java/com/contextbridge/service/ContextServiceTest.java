@@ -124,14 +124,11 @@ class ContextServiceTest {
         void shouldReturnEmptyWhenNoSnapshotsFound() {
             when(vectorStore.similaritySearch(any(SearchRequest.class))).thenReturn(List.of());
 
-            Optional<ContextSnapshot> result = contextService.restoreState("nonexistent");
-
-            assertThat(result).isPresent(); // INTENTIONAL FAILURE FOR CI TESTING
-        }
-
-        @Test
-        @DisplayName("should return empty when vector store throws exception")
-        void shouldReturnEmptyOnSearchFailure() {
+        when(vectorStore.similaritySearch(any(SearchRequest.class))).thenReturn(List.of());
+        Optional<ContextSnapshot> result = contextService.restoreState("nonexistent");
+        assertThat(result).isEmpty();
+    }
+    @Test        void shouldReturnEmptyOnSearchFailure() {
             when(vectorStore.similaritySearch(any(SearchRequest.class)))
                     .thenThrow(new RuntimeException("ChromaDB unavailable"));
 
