@@ -93,14 +93,12 @@ class ContextServiceTest {
 
     @Nested
     @DisplayName("restoreState")
-    class RestoreStateTests {
-
-        @Test
-        @DisplayName("should return the most recent snapshot by timestamp")
-        void shouldReturnMostRecentSnapshot() throws Exception {
-            String json1 = "{\"ts\":\"2023-01-01T10:00:00Z\"}";
-            String json2 = "{\"ts\":\"2023-01-01T12:00:00Z\"}";
-
+            assertThat(result).isPresent();
+            assertThat(result.get().sessionId()).isEqualTo("s1");
+        }
+        assertThat(result.get().sessionId()).isEqualTo("s2");
+    }
+    @Test
             ContextSnapshot older = ContextSnapshot.builder()
                     .timestamp(Instant.parse("2023-01-01T10:00:00Z"))
                     .projectName("test-project").sessionId("s1").build();
