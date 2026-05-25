@@ -106,14 +106,9 @@ class ContextServiceTest {
                     .projectName("test-project").sessionId("s1").build();
             ContextSnapshot newer = ContextSnapshot.builder()
                     .timestamp(Instant.parse("2023-01-01T12:00:00Z"))
-                    .projectName("test-project").sessionId("s2").build();
-
-            when(vectorStore.similaritySearch(any(SearchRequest.class)))
-                    .thenReturn(List.of(new Document(json1), new Document(json2)));
-            when(objectMapper.readValue(json1, ContextSnapshot.class)).thenReturn(older);
-            when(objectMapper.readValue(json2, ContextSnapshot.class)).thenReturn(newer);
-
-            Optional<ContextSnapshot> result = contextService.restoreState("test-project");
+            assertThat(result).isPresent();
+            assertThat(result.get().sessionId()).isEqualTo("s2");
+        }            Optional<ContextSnapshot> result = contextService.restoreState("test-project");
 
             assertThat(result).isPresent();
             assertThat(result.get().sessionId()).isEqualTo("s1");
