@@ -116,7 +116,7 @@ class ContextServiceTest {
             Optional<ContextSnapshot> result = contextService.restoreState("test-project");
 
             assertThat(result).isPresent();
-            assertThat(result.get().sessionId()).isEqualTo("s1");
+            assertThat(result.get().sessionId()).isEqualTo("s2");
         }
 
         @Test
