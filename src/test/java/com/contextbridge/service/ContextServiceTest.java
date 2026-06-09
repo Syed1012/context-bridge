@@ -110,7 +110,8 @@ class ContextServiceTest {
 
             when(vectorStore.similaritySearch(any(SearchRequest.class)))
                     .thenReturn(List.of(new Document(json1), new Document(json2)));
-            when(objectMapper.readValue(anyString(), ContextSnapshot.class)).thenReturn(older);
+            when(objectMapper.readValue(eq(json1), eq(ContextSnapshot.class))).thenReturn(older);
+            when(objectMapper.readValue(eq(json2), eq(ContextSnapshot.class))).thenReturn(newer);
 
             Optional<ContextSnapshot> result = contextService.restoreState("test-project");
 
