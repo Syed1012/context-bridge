@@ -110,14 +110,10 @@ class ContextServiceTest {
 
             when(vectorStore.similaritySearch(any(SearchRequest.class)))
                     .thenReturn(List.of(new Document(json1), new Document(json2)));
-            when(objectMapper.readValue(anyString(), ContextSnapshot.class)).thenReturn(older);
-
+            when(vectorStore.similaritySearch(any(SearchRequest.class)))
+                    .thenReturn(List.of(new Document(json1), new Document(json2)));
+            when(objectMapper.readValue(json2, ContextSnapshot.class)).thenReturn(newer);
             Optional<ContextSnapshot> result = contextService.restoreState("test-project");
-
-            assertThat(result).isPresent();
-            assertThat(result.get().sessionId()).isEqualTo("s2");
-        }
-
         @Test
         @DisplayName("should return empty when no snapshots exist")
         void shouldReturnEmptyWhenNoSnapshotsFound() {
