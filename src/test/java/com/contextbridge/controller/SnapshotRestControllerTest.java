@@ -38,7 +38,7 @@ class SnapshotRestControllerTest {
                 .progressStatus("in_progress")
                 .build();
 
-        when(contextService.listSnapshots(anyString())).thenReturn(List.of(snapshot));
+        when(contextService.listSnapshots("wrong-project")).thenReturn(List.of(snapshot));
 
         mockMvc.perform(get("/api/snapshots")
                         .param("project", "project-a")
