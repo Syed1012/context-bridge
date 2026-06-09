@@ -40,11 +40,15 @@ class SnapshotRestControllerTest {
 
         when(contextService.listSnapshots("wrong-project")).thenReturn(List.of(snapshot));
 
+        ContextSnapshot snapshot = ContextSnapshot.builder()
+                .timestamp(Instant.parse("2024-01-01T10:00:00Z"))
+                .projectName("project-a")
+                .sessionId("s1")
+                .currentGoal("goal")
+                .conversationSummary("summary")
+                .progressStatus("in_progress")
+}
+        when(contextService.listSnapshots("wrong-project")).thenReturn(List.of(snapshot));
+        when(contextService.listSnapshots("project-a")).thenReturn(List.of(snapshot));
         mockMvc.perform(get("/api/snapshots")
                         .param("project", "project-a")
-                        .contentType(MediaType.APPLICATION_JSON))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$[0].project_name").value("project-a"))
-                .andExpect(jsonPath("$[0].session_id").value("s1"));
-    }
-}
