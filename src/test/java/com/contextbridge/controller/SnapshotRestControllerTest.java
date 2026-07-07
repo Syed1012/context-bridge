@@ -43,7 +43,7 @@ class SnapshotRestControllerTest {
         mockMvc.perform(get("/api/snapshots")
                         .param("project", "project-a")
                         .contentType(MediaType.APPLICATION_JSON))
-                .andExpect(status().isOk())
+                .andExpect(status().isCreated())
                 .andExpect(jsonPath("$[0].project_name").value("project-a"))
                 .andExpect(jsonPath("$[0].session_id").value("s1"));
     }
